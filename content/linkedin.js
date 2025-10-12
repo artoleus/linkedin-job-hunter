@@ -343,14 +343,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ error: 'Network expander not initialized' });
         return false;
       }
-      hunter.networkExpander.startExpanding(request.options).then(() => {
-        console.log('[Job Hunter] Network expansion started successfully');
-        sendResponse({ success: true });
-      }).catch((error) => {
+      // Send response immediately before starting expansion (which may navigate away)
+      sendResponse({ success: true });
+      // Start expansion asynchronously (don't wait for it)
+      hunter.networkExpander.startExpanding(request.options).catch((error) => {
         console.error('[Job Hunter] Network expansion error:', error);
-        sendResponse({ error: error.message });
       });
-      return true;
+      return false; // Response already sent
 
     case 'getNetworkStatus':
       console.log('[Job Hunter] Getting network status...');
