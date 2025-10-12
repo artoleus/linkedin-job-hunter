@@ -336,7 +336,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'expandNetwork':
-      console.log('[Job Hunter] Network expansion requested...');
+      console.log('[Job Hunter] Network expansion requested with options:', request.options);
+      console.log('[Job Hunter] networkExpander exists?', !!hunter.networkExpander);
+      if (!hunter.networkExpander) {
+        console.error('[Job Hunter] networkExpander not initialized!');
+        sendResponse({ error: 'Network expander not initialized' });
+        return false;
+      }
       hunter.networkExpander.startExpanding(request.options).then(() => {
         console.log('[Job Hunter] Network expansion started successfully');
         sendResponse({ success: true });

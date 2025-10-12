@@ -363,6 +363,7 @@ class PopupController {
   }
 
   async expandNetwork() {
+    console.log('[Popup] expandNetwork() called');
     const btn = document.getElementById('expandNetwork');
     const originalText = btn.textContent;
 
@@ -370,12 +371,15 @@ class PopupController {
       btn.textContent = 'Expanding...';
       btn.disabled = true;
 
+      console.log('[Popup] Sending expandNetwork message to content script...');
       // Start automated expansion - will continue until daily limit reached
       const response = await this.sendMessageToContentScript('expandNetwork', {
         options: {
           automated: true // Run in automated mode
         }
       });
+
+      console.log('[Popup] Received response:', response);
 
       if (response.error) {
         this.showError('Please refresh the LinkedIn page first');
