@@ -648,14 +648,87 @@ class NetworkExpander {
       // Check if we're on a search results page
       if (window.location.href.includes('/search/results/people/')) {
         console.log('[Network Expander] Resuming pending expansion task...');
-        await this.startExpanding({
-          targetRole: task.targetRole,
-          maxConnections: task.maxConnections
-        });
+
+        // Clear the pending task immediately to prevent loops
+        localStorage.removeItem('networkExpansionPending');
+
+        // If this was an automated task, process the page then continue
+        if (task.automated) {
+          console.log('[Network Expander] 🤖 Automated mode detected, processing this role then continuing...');
+          await this.processCurrentPageConnections(task.maxConnections);
+
+          // After processing, continue automated expansion if not at limit
+          if (!this.hasReachedDailyLimit()) {
+            console.log('[Network Expander] Continuing automated expansion to next role...');
+            await this.runAutomatedExpansion();
+          } else {
+            console.log('[Network Expander] ✅ Daily limit reached! Stopping automated expansion.');
+            this.isRunning = false;
+          }
+        } else {
+          // Single role expansion (legacy mode)
+          await this.startExpanding({
+            targetRole: task.targetRole,
+            maxConnections: task.maxConnections
+          });
+        }
       }
     } catch (error) {
       console.error('[Network Expander] Error checking pending expansion:', error);
       localStorage.removeItem('networkExpansionPending');
+    }
+  }
+
+  // Process connections on the current search page
+  async processCurrentPageConnections(maxConnections) {
+    this.isRunning = true;
+    console.log(`[Network Expander] Processing current page (max ${maxConnections} connections)...`);
+
+    try {
+      // Wait for page to settle
+      await this.humanDelay(3000, 5000);
+
+      // Find all Connect buttons on the page
+      const connectButtons = this.findAllConnectButtons();
+      console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons on page`);
+
+      if (connectButtons.length === 0) {
+        console.log('[Network Expander] No Connect buttons found, skipping this page');
+        return 0;
+      }
+
+      // Shuffle buttons to randomize selection order
+      const shuffledButtons = this.shuffleArray([...connectButtons]);
+      console.log('[Network Expander] Randomized button order for more natural behavior');
+
+      let connected = 0;
+      for (const button of shuffledButtons) {
+        if (connected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
+          break;
+        }
+
+        // Random chance to skip (makes it less robotic)
+        if (Math.random() < 0.3) {
+          console.log('[Network Expander] Randomly skipping profile (more human-like)');
+          continue;
+        }
+
+        const success = await this.sendConnectionRequestByButton(button, true);
+        if (success) {
+          connected++;
+          console.log(`[Network Expander] ✅ ${connected}/${maxConnections} connections sent`);
+        }
+
+        // Long delay between requests (very important!)
+        await this.humanDelay(10000, 30000); // 10-30 seconds between requests
+      }
+
+      console.log(`[Network Expander] ✅ Page processing complete. Sent ${connected} requests.`);
+      return connected;
+
+    } catch (error) {
+      console.error('[Network Expander] Error processing page:', error);
+      return 0;
     }
   }
 
@@ -667,46 +740,40 @@ class NetworkExpander {
 
     console.log(`[Network Expander] 🎯 Target: ${maxDaily} connections total, ${connectionsPerRole} per role`);
 
-    try {
-      while (!this.hasReachedDailyLimit() && this.isRunning) {
-        const remaining = maxDaily - this.dailyLimits.invitesSent;
-        console.log(`[Network Expander] 📊 Progress: ${this.dailyLimits.invitesSent}/${maxDaily} connections sent`);
-
-        if (remaining <= 0) {
-          console.log('[Network Expander] ✅ Daily limit reached!');
-          break;
-        }
-
-        // Get next role in rotation
-        const targetRole = this.getNextTargetRole();
-        const connectionsThisRound = Math.min(connectionsPerRole, remaining);
-
-        console.log(`[Network Expander] 🔄 Searching for role: "${targetRole}" (${connectionsThisRound} connections)`);
-
-        // Navigate to search page for this role
-        await this.expandSingleRole(targetRole, connectionsThisRound);
-
-        // Check if we should continue
-        if (!this.isRunning) {
-          console.log('[Network Expander] ⏹️ Stopped by user');
-          break;
-        }
-
-        // Delay between role searches (appears more natural)
-        if (!this.hasReachedDailyLimit() && this.isRunning) {
-          console.log('[Network Expander] 💤 Pausing before next role search...');
-          await this.humanDelay(30000, 60000); // 30-60 seconds between roles
-        }
-      }
-
-      console.log(`[Network Expander] 🏁 Automated expansion complete! Sent ${this.dailyLimits.invitesSent} connections today`);
-
-    } catch (error) {
-      console.error('[Network Expander] Error in automated expansion:', error);
-    } finally {
+    // Check if we've reached the limit
+    if (this.hasReachedDailyLimit()) {
+      console.log('[Network Expander] ✅ Daily limit already reached!');
       this.isRunning = false;
       localStorage.removeItem('networkExpansionPending');
+      return;
     }
+
+    const remaining = maxDaily - this.dailyLimits.invitesSent;
+    console.log(`[Network Expander] 📊 Progress: ${this.dailyLimits.invitesSent}/${maxDaily} connections sent`);
+
+    // Get next role in rotation
+    const targetRole = this.getNextTargetRole();
+    const connectionsThisRound = Math.min(connectionsPerRole, remaining);
+
+    console.log(`[Network Expander] 🔄 Searching for role: "${targetRole}" (${connectionsThisRound} connections)`);
+
+    // Store automated expansion state before navigating
+    localStorage.setItem('networkExpansionPending', JSON.stringify({
+      automated: true,
+      targetRole,
+      maxConnections: connectionsThisRound,
+      timestamp: Date.now()
+    }));
+
+    // Build search URL
+    let searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(targetRole)}`;
+    if (this.settings.targetHiringOnly) {
+      searchUrl += '&serviceCategories=%5B%22HIRING%22%5D';
+    }
+
+    // Navigate to search page (script will resume after page loads via checkPendingExpansion)
+    console.log('[Network Expander] Navigating to:', searchUrl);
+    window.location.href = searchUrl;
   }
 
   // Expand network for a single role
