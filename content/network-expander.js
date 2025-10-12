@@ -188,8 +188,8 @@ class NetworkExpander {
 
   // Check if we've reached daily limits
   hasReachedDailyLimit() {
-    const maxInvites = this.settings.maxDailyInvites || 15; // Very conservative default
-    const maxProfileViews = this.settings.maxDailyProfileViews || 30;
+    const maxInvites = this.settings.maxDailyInvites || 30; // Conservative default
+    const maxProfileViews = this.settings.maxDailyProfileViews || 60;
 
     return this.dailyLimits.invitesSent >= maxInvites ||
            this.dailyLimits.profilesViewed >= maxProfileViews;
@@ -783,7 +783,7 @@ class NetworkExpander {
     return {
       isRunning: this.isRunning,
       dailyLimits: this.dailyLimits,
-      remainingInvites: Math.max(0, (this.settings.maxDailyInvites || 15) - this.dailyLimits.invitesSent)
+      remainingInvites: Math.max(0, (this.settings.maxDailyInvites || 30) - this.dailyLimits.invitesSent)
     };
   }
 }
