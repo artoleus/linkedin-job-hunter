@@ -290,7 +290,7 @@ class PopupController {
       const response = await this.sendMessageToContentScript('getNetworkStatus');
       if (!response.error && response.dailyLimits) {
         const { dailyLimits, remainingInvites, isRunning } = response;
-        const maxInvites = this.settings.maxDailyInvites || 15;
+        const maxInvites = this.settings.maxDailyInvites || 30;
 
         document.getElementById('todaysInvites').textContent = dailyLimits.invitesSent || 0;
         document.getElementById('inviteLimit').textContent = maxInvites;
