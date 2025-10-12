@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn Job Hunter</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>🎯 Job Hunter</h1>
+      <div class="status-indicator" id="statusIndicator">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Inactive</span>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button id="toggleScanning" class="btn btn-primary">
+        <span id="toggleText">Start Scanning</span>
+      </button>
+      <button id="manualScan" class="btn btn-secondary">
+        Manual Scan
+      </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat-item">
+        <span class="stat-label">Today's Scans:</span>
+        <span class="stat-value" id="todaysScans">0</span>
+        <span class="stat-limit">/ <span id="dailyLimit">80</span></span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Opportunities Found:</span>
+        <span class="stat-value" id="opportunitiesCount">0</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Last Scan:</span>
+        <span class="stat-value" id="lastScan">Never</span>
+      </div>
+    </div>
+
+    <!-- Network Expansion Section -->
+    <div class="network-section">
+      <h3>🤝 Network Expansion</h3>
+      <div class="network-stats">
+        <div class="stat-item">
+          <span class="stat-label">Today's Invites:</span>
+          <span class="stat-value" id="todaysInvites">0</span>
+          <span class="stat-limit">/ <span id="inviteLimit">15</span></span>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="expandNetwork" class="btn btn-primary">
+          Auto Expand Network
+        </button>
+        <button id="stopExpansion" class="btn btn-secondary" style="display: none;">
+          Stop Expansion
+        </button>
+      </div>
+      <small class="network-hint">Sends personalized connection requests to professionals in your target roles</small>
+    </div>
+
+    <!-- Recent Opportunities -->
+    <div class="opportunities-section">
+      <h3>Recent Opportunities</h3>
+      <div id="opportunitiesList" class="opportunities-list">
+        <div class="no-opportunities">
+          No opportunities found yet. Start scanning to discover jobs!
+        </div>
+      </div>
+      <button id="viewAllOpportunities" class="btn btn-link">
+        View All Opportunities
+      </button>
+    </div>
+
+    <!-- Settings Toggle -->
+    <div class="settings-toggle">
+      <button id="settingsToggle" class="btn btn-text">
+        ⚙️ Settings
+      </button>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <h3>Settings</h3>
+      
+      <div class="setting-group">
+        <label for="maxProfiles">Daily Profile Limit:</label>
+        <input type="number" id="maxProfiles" min="1" max="200" value="80">
+        <small>Maximum profiles to scan per day (1-200)</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="minDelay">Min Delay (seconds):</label>
+        <input type="number" id="minDelay" min="1" max="30" value="2">
+      </div>
+
+      <div class="setting-group">
+        <label for="maxDelay">Max Delay (seconds):</label>
+        <input type="number" id="maxDelay" min="5" max="60" value="8">
+      </div>
+
+      <div class="setting-group">
+        <label for="keywords">Job Keywords (comma-separated):</label>
+        <textarea id="keywords" rows="3" placeholder="hiring, looking for, open position"></textarea>
+      </div>
+
+      <div class="setting-group">
+        <label for="targetRoles">Target Roles (comma-separated):</label>
+        <textarea id="targetRoles" rows="2" placeholder="developer, engineer, programmer"></textarea>
+      </div>
+
+      <h4>Network Expansion Settings</h4>
+
+      <div class="setting-group">
+        <label for="maxDailyInvites">Max Daily Connection Requests:</label>
+        <input type="number" id="maxDailyInvites" min="1" max="50" value="30">
+        <small>Recommended: 25-30/day (LinkedIn allows ~100/week)</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="connectionsPerRole">Connections Per Role (per search):</label>
+        <input type="number" id="connectionsPerRole" min="1" max="10" value="3">
+        <small>How many connections to send before switching to next role (1-10)</small>
+      </div>
+
+      <div class="setting-group">
+        <label>
+          <input type="checkbox" id="usePersonalizedMessages" checked>
+          Use Personalized Messages
+        </label>
+        <small>Adds custom notes to connection requests (more natural)</small>
+      </div>
+
+      <div class="setting-group">
+        <label>
+          <input type="checkbox" id="targetHiringOnly">
+          Only Connect with People Actively Hiring
+        </label>
+        <small>Uses LinkedIn's "Hiring" filter to target recruiters and hiring managers posting jobs</small>
+      </div>
+
+      <div class="settings-actions">
+        <button id="saveSettings" class="btn btn-primary">Save Settings</button>
+        <button id="resetSettings" class="btn btn-secondary">Reset to Defaults</button>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <small>LinkedIn Job Hunter v1.0</small>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
