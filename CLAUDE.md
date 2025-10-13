@@ -33,19 +33,25 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 **Key Components:**
 
-- **background.js**: Service worker that handles Chrome storage operations, acts as message broker between popup and content scripts. Initializes default settings on installation.
+- **background.js**: Service worker that handles Chrome storage operations, acts as message broker between popup and content scripts. Initializes default settings on installation. Manages job applications storage and connection analytics data.
 
-- **content/linkedin.js**: Main orchestrator that runs on LinkedIn pages. Creates the `LinkedInJobHunter` class which manages UI indicators, page observers (MutationObserver for SPA navigation), and schedules automatic scans.
+- **content/linkedin.js**: Main orchestrator that runs on LinkedIn pages. Creates the `LinkedInJobHunter` class which manages UI indicators, page observers (MutationObserver for SPA navigation), schedules automatic scans, and coordinates job application automation and network expansion.
 
 - **content/job-detector.js**: Analyzes DOM elements to identify job opportunities. Uses keyword matching, regex patterns, and confidence scoring (0.0-1.0) to rate opportunities. Extracts structured data from posts, profiles, and company updates.
 
+- **content/job-applicator.js**: Automated job application system using LinkedIn Easy Apply. Features flexible role matching (handles abbreviations like GRC, vCISO, ISO27001), pagination support, distance calculation for hybrid roles, auto-fill for common fields, smart detection of custom questions (saves as draft when needed), and auto-answers yes/no questions. Includes daily rate limiting (default 20/day) and human-like behavior simulation.
+
 - **content/network-crawler.js**: Implements rate-limited profile visiting with human-like behavior (random delays, natural scrolling, simulated mouse events). Tracks daily limits in localStorage with automatic midnight reset.
 
-- **content/network-expander.js**: Automated network expansion system that sends personalized connection requests. Features role rotation, random selection, human-like typing, configurable daily limits (default 30/day), and context-aware messaging for hiring managers vs general networking. Runs in automated mode cycling through all target roles until daily limit reached.
+- **content/network-expander.js**: Automated network expansion system that sends personalized connection requests. Features role rotation, random selection, human-like typing, configurable daily limits (default 30/day), and context-aware messaging for hiring managers vs general networking. Runs in automated mode cycling through all target roles until daily limit reached. Tracks connection analytics for performance monitoring.
 
 - **storage/storage.js**: Wrapper around chrome.runtime.sendMessage that provides async/await interface to background service worker. Includes in-memory cache for settings.
 
-- **popup/popup.js**: UI controller for extension popup. Communicates with both background script (for storage) and content script (for real-time status). Updates UI every 5 seconds.
+- **popup/popup.js**: UI controller for extension popup. Communicates with both background script (for storage) and content script (for real-time status). Updates UI every 5 seconds. Includes controls for job application automation and network expansion.
+
+- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates, response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, and CSV export.
+
+- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics and supports CSV export.
 
 ## Development
 
@@ -130,17 +136,19 @@ Add to `job-detector.js`:
 
 ### 🚀 High Priority Features
 
-**1. Application Tracking System**
-- Track which jobs you've applied to (status: interested, applied, interviewing, rejected, offer)
-- Integration with LinkedIn's "Easy Apply" button automation
-- Application history with timestamps, notes, and follow-up reminders
-- CSV/JSON export of applications for external tracking
+**1. ✅ Application Tracking System** (COMPLETED)
+- ✅ Track applications (status: applied, draft/needs completion)
+- ✅ Integration with LinkedIn's Easy Apply automation
+- ✅ Application history with timestamps and notes
+- ✅ CSV export of applications
+- Future: Add interviewing, rejected, offer statuses
 
-**2. Response Analytics**
-- Track connection acceptance rate (% of requests accepted)
-- A/B testing for message templates (which messages get better response?)
-- Time-of-day analysis (best times to send connection requests)
-- Role-specific acceptance rates (which roles respond best?)
+**2. ✅ Response Analytics** (COMPLETED)
+- ✅ Track connection acceptance rate
+- ✅ Time-of-day analysis (best times to send requests)
+- ✅ Day-of-week patterns
+- ✅ Role-specific acceptance rates
+- Future: A/B testing for message templates
 
 **3. Smart Opportunity Scoring**
 - ML-based scoring using your historical actions (which jobs you clicked/saved)
@@ -254,19 +262,44 @@ Add to `job-detector.js`:
 
 ### 🎯 Current Features (Implemented)
 
+**Job Discovery & Scanning:**
 ✅ Automated job opportunity detection from LinkedIn feed
-✅ Network expansion with personalized connection requests
+✅ Opportunity confidence scoring (0.0-1.0)
+✅ Manual scan functionality
+✅ Settings persistence via Chrome Storage
+
+**Network Expansion:**
+✅ Automated connection requests with personalization
 ✅ Role rotation for diverse networking
 ✅ Random profile selection for natural behavior
 ✅ Human-like typing and delays
-✅ Daily rate limiting (30 connections/day)
+✅ Daily rate limiting (30 connections/day default)
 ✅ Context-aware messaging (hiring vs networking)
 ✅ UK English grammar in messages
-✅ Stop/start controls for automated expansion
+✅ Stop/start controls
 ✅ Configurable connections per role
-✅ Manual scan functionality
-✅ Opportunity confidence scoring
-✅ Settings persistence via Chrome Storage
+
+**Job Application Automation:**
+✅ Easy Apply automation with smart form filling
+✅ Flexible role matching (handles GRC, vCISO, AI, ISO27001 abbreviations)
+✅ Multi-page job listing processing (up to 5 pages)
+✅ Distance calculation for hybrid roles (75-mile radius default)
+✅ Auto-fill for standard fields (email, phone, name)
+✅ Auto-answer common yes/no questions (work authorization, sponsorship, etc.)
+✅ Smart custom question detection (saves as draft when manual input needed)
+✅ Auto-click "Done" button after successful submission
+✅ Daily rate limiting (20 applications/day default)
+✅ Full job title verification (avoids false matches)
+
+**Analytics & Tracking:**
+✅ Connection analytics dashboard with charts
+✅ Acceptance rate tracking by role and time
+✅ Response time analysis
+✅ Time-of-day and day-of-week patterns
+✅ Job applications tracker with status filtering
+✅ Draft applications management
+✅ CSV export for both analytics and applications
+✅ Interactive filtering and search
 
 ---
 
