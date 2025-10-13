@@ -332,15 +332,23 @@ class JobApplicator {
       return;
     }
 
-    // Check if we're on LinkedIn Jobs page
-    if (!window.location.href.includes('/jobs/')) {
-      console.log('[Job Applicator] Not on jobs page, navigating...');
+    const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
+    const keywords = targetRoles.join(' OR ');
+    const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keywords)}&f_AL=true`;
+    const currentUrl = window.location.href;
+
+    // Check if we need to navigate to the search page with keywords
+    if (!currentUrl.includes('/jobs/search/') || !currentUrl.includes('keywords=')) {
+      console.log('[Job Applicator] Navigating to job search with keywords...');
+      console.log('[Job Applicator] Target roles:', targetRoles);
+      console.log('[Job Applicator] Search URL:', searchUrl);
       this.navigateToJobsSearch();
       return;
     }
 
     this.isRunning = true;
     console.log('[Job Applicator] 🎯 Starting automated job application...');
+    console.log('[Job Applicator] Target roles:', targetRoles);
 
     try {
       await this.processJobListings();
