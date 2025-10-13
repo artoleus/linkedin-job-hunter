@@ -299,6 +299,49 @@ class JobApplicator {
     window.location.href = searchUrl;
   }
 
+  // Verify job title in the full job description to avoid false matches
+  async verifyJobTitleInDescription(cardTitle) {
+    try {
+      // Get the job description panel
+      const jobDescription = document.querySelector('.jobs-description, .jobs-details, .job-view-layout');
+      if (!jobDescription) {
+        console.log('[Job Applicator] Job description not found');
+        return false;
+      }
+
+      // Get the full job title from description header
+      const descriptionTitle = jobDescription.querySelector('h1, .jobs-unified-top-card__job-title, .job-details-jobs-unified-top-card__job-title');
+      if (!descriptionTitle) {
+        console.log('[Job Applicator] Job title in description not found');
+        return false;
+      }
+
+      const fullTitle = descriptionTitle.textContent.trim();
+      console.log('[Job Applicator] Card title:', cardTitle);
+      console.log('[Job Applicator] Full title:', fullTitle);
+
+      // Check if the target roles match the FULL title (not just card title)
+      const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
+      const roleMatches = targetRoles.some(role =>
+        fullTitle.toLowerCase().includes(role.toLowerCase())
+      );
+
+      if (!roleMatches) {
+        console.log('[Job Applicator] ⚠️ Full job title does not match target roles');
+        console.log('[Job Applicator] Expected one of:', targetRoles);
+        console.log('[Job Applicator] Got:', fullTitle);
+        return false;
+      }
+
+      console.log('[Job Applicator] ✅ Job title verified:', fullTitle);
+      return true;
+
+    } catch (error) {
+      console.error('[Job Applicator] Error verifying job title:', error);
+      return false;
+    }
+  }
+
   async processJobListings() {
     console.log('[Job Applicator] Processing job listings...');
 
@@ -352,8 +395,17 @@ class JobApplicator {
     try {
       console.log('[Job Applicator] Applying to:', jobData.jobTitle);
 
-      // Find Easy Apply button
-      const easyApplyBtn = document.querySelector('.jobs-apply-button--top-card, button[aria-label*="Easy Apply"]');
+      // Wait for job details to load
+      await this.humanDelay(1000, 2000);
+
+      // Verify job title in the job description (not just the card)
+      if (!await this.verifyJobTitleInDescription(jobData.jobTitle)) {
+        console.log('[Job Applicator] ⚠️ Job title verification failed - skipping');
+        return false;
+      }
+
+      // Find Easy Apply button using the correct selector
+      const easyApplyBtn = document.querySelector('#jobs-apply-button-id, .jobs-apply-button--top-card, button[aria-label*="Easy Apply"]');
 
       if (!easyApplyBtn) {
         console.log('[Job Applicator] Easy Apply button not found');

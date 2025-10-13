@@ -47,7 +47,7 @@
   
   "web_accessible_resources": [
     {
-      "resources": ["content/*", "analytics/*", "applications/*"],
+      "resources": ["content/*", "analytics/*", "applications/*", "lib/*"],
       "matches": ["https://*.linkedin.com/*", "https://*/*", "http://*/*"]
     }
   ]

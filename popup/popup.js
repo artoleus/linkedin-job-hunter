@@ -530,7 +530,7 @@ class PopupController {
         const { dailyLimits, remainingApplications, isRunning } = response;
         const maxApplications = this.settings.maxDailyApplications || 20;
 
-        document.getElementById('todaysApplications').textContent = dailyLimits.applicationsSent || 0;
+        document.getElementById('todaysApplications').textContent = dailyLimits.applicationsSubmitted || 0;
         document.getElementById('applicationLimit').textContent = maxApplications;
 
         const startBtn = document.getElementById('startJobApplication');
