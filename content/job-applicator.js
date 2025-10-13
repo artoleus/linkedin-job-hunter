@@ -748,6 +748,31 @@ class JobApplicator {
       while (currentStep < maxSteps) {
         await this.humanDelay(1000, 2000);
 
+        // Check for required custom questions that we can't auto-fill
+        const hasRequiredQuestions = this.detectRequiredCustomQuestions();
+        if (hasRequiredQuestions) {
+          console.log('[Job Applicator] ⚠️ Detected required custom questions - saving as draft');
+
+          // Save application as draft for manual completion
+          await chrome.runtime.sendMessage({
+            action: 'saveJobApplication',
+            applicationData: {
+              ...jobData,
+              jobId: window.location.href,
+              jobUrl: window.location.href,
+              status: 'draft',
+              requiresCustomQuestions: true,
+              notes: 'Has required custom questions - needs manual completion'
+            }
+          });
+
+          // Close modal
+          const closeBtn = document.querySelector('button[aria-label*="Dismiss"], button[data-test-modal-close-btn]');
+          if (closeBtn) closeBtn.click();
+
+          return false;
+        }
+
         // Auto-fill any visible fields
         await this.autoFillFields();
 
@@ -757,6 +782,30 @@ class JobApplicator {
         if (!nextBtn) {
           console.log('[Job Applicator] No more buttons found');
           break;
+        }
+
+        // Check if button is disabled (usually means required fields not filled)
+        if (nextBtn.disabled) {
+          console.log('[Job Applicator] ⚠️ Next/Submit button is disabled - likely has required fields');
+
+          // Save application as draft
+          await chrome.runtime.sendMessage({
+            action: 'saveJobApplication',
+            applicationData: {
+              ...jobData,
+              jobId: window.location.href,
+              jobUrl: window.location.href,
+              status: 'draft',
+              requiresCustomQuestions: true,
+              notes: 'Button disabled - has unfilled required fields'
+            }
+          });
+
+          // Close modal
+          const closeBtn = document.querySelector('button[aria-label*="Dismiss"], button[data-test-modal-close-btn]');
+          if (closeBtn) closeBtn.click();
+
+          return false;
         }
 
         const buttonText = nextBtn.textContent.toLowerCase();
@@ -783,26 +832,172 @@ class JobApplicator {
     }
   }
 
+  detectRequiredCustomQuestions() {
+    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
+    if (!modal) return false;
+
+    // Look for "Additional Questions" heading
+    const modalText = modal.textContent;
+    if (modalText.includes('Additional Questions')) {
+      console.log('[Job Applicator] 🔍 Found "Additional Questions" section');
+    }
+
+    // Find all required fields (marked with * or aria-required)
+    const requiredTextAreas = modal.querySelectorAll('textarea[required], textarea[aria-required="true"]');
+    const requiredInputs = modal.querySelectorAll('input[required], input[aria-required="true"]');
+    const requiredSelects = modal.querySelectorAll('select[required], select[aria-required="true"]');
+
+    // Check for error messages indicating required fields
+    const errorMessages = modal.querySelectorAll('[class*="error"], [class*="required"]');
+    const hasErrorText = Array.from(errorMessages).some(el =>
+      el.textContent.toLowerCase().includes('please enter') ||
+      el.textContent.toLowerCase().includes('required')
+    );
+
+    // Look for empty required text areas (custom questions)
+    const emptyRequiredTextAreas = Array.from(requiredTextAreas).filter(ta => !ta.value.trim());
+
+    // Look for required radio/checkbox groups without selection
+    const radioGroups = modal.querySelectorAll('fieldset');
+    const unfilledRadioGroups = Array.from(radioGroups).filter(fieldset => {
+      const radios = fieldset.querySelectorAll('input[type="radio"]');
+      if (radios.length > 0) {
+        const hasSelection = Array.from(radios).some(r => r.checked);
+        return !hasSelection;
+      }
+      return false;
+    });
+
+    const hasRequiredFields =
+      emptyRequiredTextAreas.length > 0 ||
+      requiredSelects.length > 0 ||
+      unfilledRadioGroups.length > 0 ||
+      hasErrorText;
+
+    if (hasRequiredFields) {
+      console.log('[Job Applicator] Required fields detected:', {
+        textAreas: emptyRequiredTextAreas.length,
+        selects: requiredSelects.length,
+        radioGroups: unfilledRadioGroups.length,
+        hasErrors: hasErrorText
+      });
+    }
+
+    return hasRequiredFields;
+  }
+
   async autoFillFields() {
+    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
+    if (!modal) return;
+
     // Auto-fill name
-    const nameField = document.querySelector('input[name*="name"], input[id*="name"]');
+    const nameField = modal.querySelector('input[name*="name"], input[id*="name"]');
     if (nameField && !nameField.value && this.settings.autoFillName) {
       nameField.value = this.settings.autoFillName;
       nameField.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log('[Job Applicator] Auto-filled name');
     }
 
     // Auto-fill email
-    const emailField = document.querySelector('input[type="email"], input[name*="email"]');
+    const emailField = modal.querySelector('input[type="email"], input[name*="email"]');
     if (emailField && !emailField.value && this.settings.autoFillEmail) {
       emailField.value = this.settings.autoFillEmail;
       emailField.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log('[Job Applicator] Auto-filled email');
     }
 
     // Auto-fill phone
-    const phoneField = document.querySelector('input[type="tel"], input[name*="phone"]');
+    const phoneField = modal.querySelector('input[type="tel"], input[name*="phone"]');
     if (phoneField && !phoneField.value && this.settings.autoFillPhone) {
       phoneField.value = this.settings.autoFillPhone;
       phoneField.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log('[Job Applicator] Auto-filled phone');
+    }
+
+    // Try to answer common yes/no questions automatically
+    this.autoAnswerCommonQuestions(modal);
+  }
+
+  autoAnswerCommonQuestions(modal) {
+    // Get all labels and their associated inputs
+    const labels = modal.querySelectorAll('label');
+
+    for (const label of labels) {
+      const labelText = label.textContent.toLowerCase();
+
+      // UK work authorization question
+      if (labelText.includes('legally') && labelText.includes('work') && labelText.includes('uk')) {
+        console.log('[Job Applicator] 🔍 Found UK work authorization question');
+
+        // Try to find radio buttons or select
+        const fieldset = label.closest('fieldset') || label.parentElement;
+        if (fieldset) {
+          // Look for "Yes" radio button
+          const yesRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
+            const radioLabel = radio.nextElementSibling?.textContent || '';
+            return radioLabel.toLowerCase().includes('yes');
+          });
+
+          if (yesRadio && !yesRadio.checked && this.settings.ukWorkAuth === true) {
+            yesRadio.click();
+            console.log('[Job Applicator] ✅ Auto-answered UK work authorization: Yes');
+          }
+        }
+      }
+
+      // Sponsorship question
+      if (labelText.includes('sponsorship') || labelText.includes('visa')) {
+        console.log('[Job Applicator] 🔍 Found sponsorship question');
+
+        const fieldset = label.closest('fieldset') || label.parentElement;
+        if (fieldset) {
+          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
+            const radioLabel = radio.nextElementSibling?.textContent || '';
+            return radioLabel.toLowerCase().includes('no');
+          });
+
+          if (noRadio && !noRadio.checked && this.settings.needsSponsorship === false) {
+            noRadio.click();
+            console.log('[Job Applicator] ✅ Auto-answered sponsorship: No');
+          }
+        }
+      }
+
+      // Criminal convictions question
+      if (labelText.includes('criminal') && labelText.includes('conviction')) {
+        console.log('[Job Applicator] 🔍 Found criminal convictions question');
+
+        const fieldset = label.closest('fieldset') || label.parentElement;
+        if (fieldset) {
+          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
+            const radioLabel = radio.nextElementSibling?.textContent || '';
+            return radioLabel.toLowerCase().includes('no');
+          });
+
+          if (noRadio && !noRadio.checked && this.settings.hasCriminalRecord === false) {
+            noRadio.click();
+            console.log('[Job Applicator] ✅ Auto-answered criminal convictions: No');
+          }
+        }
+      }
+
+      // Disability/reasonable adjustments question
+      if (labelText.includes('reasonable') && labelText.includes('adjustment')) {
+        console.log('[Job Applicator] 🔍 Found reasonable adjustments question');
+
+        const fieldset = label.closest('fieldset') || label.parentElement;
+        if (fieldset) {
+          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
+            const radioLabel = radio.nextElementSibling?.textContent || '';
+            return radioLabel.toLowerCase().includes('no');
+          });
+
+          if (noRadio && !noRadio.checked && this.settings.needsAdjustments === false) {
+            noRadio.click();
+            console.log('[Job Applicator] ✅ Auto-answered reasonable adjustments: No');
+          }
+        }
+      }
     }
   }
 
