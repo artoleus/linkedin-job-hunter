@@ -17,6 +17,7 @@ class NetworkExpander {
   async init() {
     this.settings = await this.storage.getSettings();
     await this.loadDailyLimits();
+    this.currentTargetRole = null; // Track current role for analytics
   }
 
   async loadDailyLimits() {
@@ -69,6 +70,27 @@ class NetworkExpander {
 
   saveDailyLimits() {
     localStorage.setItem('networkExpanderLimits', JSON.stringify(this.dailyLimits));
+  }
+
+  // Save connection request to analytics
+  async saveConnectionAnalytics(fullName, profileUrl, message) {
+    try {
+      const requestData = {
+        targetRole: this.currentTargetRole || 'Unknown',
+        fullName: fullName,
+        profileUrl: profileUrl || window.location.href,
+        messageTemplate: message ? message.substring(0, 100) : null
+      };
+
+      await chrome.runtime.sendMessage({
+        action: 'saveConnectionRequest',
+        requestData
+      });
+
+      console.log('[Network Expander] Saved connection to analytics:', fullName);
+    } catch (error) {
+      console.error('[Network Expander] Error saving analytics:', error);
+    }
   }
 
   // Generate personalized connection message based on profile info
@@ -323,6 +345,9 @@ class NetworkExpander {
               this.dailyLimits.invitesSent++;
               this.saveDailyLimits();
 
+              // Save to analytics
+              await this.saveConnectionAnalytics(fullName, null, message);
+
               return true;
             }
           }
@@ -339,6 +364,9 @@ class NetworkExpander {
 
         this.dailyLimits.invitesSent++;
         this.saveDailyLimits();
+
+        // Save to analytics
+        await this.saveConnectionAnalytics(fullName, null, null);
 
         return true;
       }
@@ -653,6 +681,9 @@ class NetworkExpander {
         const connectionsAlreadySent = task.connectionsAlreadySent || 0;
         const currentPage = task.currentPage || 1;
 
+        // Restore current target role for analytics tracking
+        this.currentTargetRole = task.targetRole;
+
         // If this was an automated task, process the page then continue
         if (task.automated) {
           console.log('[Network Expander] 🤖 Automated mode detected, processing this role then continuing...');
@@ -845,6 +876,9 @@ class NetworkExpander {
     // Get next role in rotation
     const targetRole = this.getNextTargetRole();
     const connectionsThisRound = Math.min(connectionsPerRole, remaining);
+
+    // Set current role for analytics tracking
+    this.currentTargetRole = targetRole;
 
     console.log(`[Network Expander] 🔄 Searching for role: "${targetRole}" (${connectionsThisRound} connections)`);
 

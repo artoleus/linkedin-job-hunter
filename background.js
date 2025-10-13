@@ -57,16 +57,58 @@ class BackgroundService {
       maxDailyProfileViews: 60,
       connectionsPerRole: 3,  // Connections per role before switching
       usePersonalizedMessages: true,
-      targetHiringOnly: false  // Default to all professionals
+      targetHiringOnly: false,  // Default to all professionals
+      // Job application settings
+      jobApplicationEnabled: false,
+      maxDailyApplications: 20,
+      targetJobRoles: ['developer', 'software engineer', 'programmer'],
+      minSalary: null,
+      maxSalary: null,
+      workTypes: ['remote', 'hybrid'],  // remote, hybrid, onsite
+      homeLocation: {
+        address: 'Sittingbourne, Kent, UK',
+        lat: 51.3411,
+        lng: 0.7337
+      },
+      maxHybridDistance: 75,  // miles
+      autoFillName: '',
+      autoFillEmail: '',
+      autoFillPhone: ''
     };
 
-    await chrome.storage.local.set({ 
+    await chrome.storage.local.set({
       settings: defaultSettings,
       opportunities: [],
       scanStats: {
         profilesScanned: 0,
         opportunitiesFound: 0,
         lastScanDate: null
+      },
+      connectionAnalytics: {
+        requests: [],
+        stats: {
+          totalSent: 0,
+          totalAccepted: 0,
+          totalDeclined: 0,
+          totalPending: 0,
+          acceptanceRate: 0,
+          avgResponseTime: 0
+        }
+      },
+      jobApplications: {
+        applications: [],
+        searchCriteria: {
+          targetRoles: ['developer', 'software engineer'],
+          minSalary: null,
+          maxSalary: null,
+          workTypes: ['remote', 'hybrid'],
+          homeLocation: {
+            address: 'Sittingbourne, Kent, UK',
+            lat: 51.3411,
+            lng: 0.7337
+          },
+          maxHybridDistance: 75
+        }
       }
     });
   }
@@ -97,6 +139,36 @@ class BackgroundService {
         case 'updateSettings':
           await this.updateSettings(request.settings);
           sendResponse({ success: true });
+          break;
+
+        case 'saveConnectionRequest':
+          await this.saveConnectionRequest(request.requestData);
+          sendResponse({ success: true });
+          break;
+
+        case 'updateConnectionStatus':
+          await this.updateConnectionStatus(request.requestId, request.status);
+          sendResponse({ success: true });
+          break;
+
+        case 'getConnectionAnalytics':
+          const analytics = await this.getConnectionAnalytics();
+          sendResponse({ analytics });
+          break;
+
+        case 'saveJobApplication':
+          await this.saveJobApplication(request.applicationData);
+          sendResponse({ success: true });
+          break;
+
+        case 'updateJobApplication':
+          await this.updateJobApplication(request.applicationId, request.updates);
+          sendResponse({ success: true });
+          break;
+
+        case 'getJobApplications':
+          const applications = await this.getJobApplications();
+          sendResponse({ applications });
           break;
 
         default:
@@ -168,6 +240,136 @@ class BackgroundService {
 
   async updateSettings(newSettings) {
     await chrome.storage.local.set({ settings: newSettings });
+  }
+
+  // Connection Analytics Methods
+  async saveConnectionRequest(requestData) {
+    console.log('[Background] Saving connection request:', requestData.fullName);
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    const request = {
+      id: Date.now().toString(),
+      targetRole: requestData.targetRole,
+      fullName: requestData.fullName,
+      profileUrl: requestData.profileUrl,
+      sentDate: new Date().toISOString(),
+      status: 'pending',
+      responseDate: null,
+      messageTemplate: requestData.messageTemplate || null,
+      timeOfDay: new Date().getHours(),
+      dayOfWeek: new Date().getDay()
+    };
+
+    analytics.requests.push(request);
+
+    // Update stats
+    analytics.stats.totalSent = (analytics.stats.totalSent || 0) + 1;
+    analytics.stats.totalPending = (analytics.stats.totalPending || 0) + 1;
+
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    console.log('[Background] Connection request saved. Total sent:', analytics.stats.totalSent);
+  }
+
+  async updateConnectionStatus(requestId, status) {
+    console.log('[Background] Updating connection status:', requestId, status);
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    const request = analytics.requests.find(r => r.id === requestId);
+    if (!request) {
+      console.log('[Background] Request not found:', requestId);
+      return;
+    }
+
+    const oldStatus = request.status;
+    request.status = status;
+    request.responseDate = new Date().toISOString();
+
+    // Update stats
+    if (oldStatus === 'pending') {
+      analytics.stats.totalPending = Math.max(0, (analytics.stats.totalPending || 0) - 1);
+    }
+
+    if (status === 'accepted') {
+      analytics.stats.totalAccepted = (analytics.stats.totalAccepted || 0) + 1;
+    } else if (status === 'declined') {
+      analytics.stats.totalDeclined = (analytics.stats.totalDeclined || 0) + 1;
+    }
+
+    // Recalculate acceptance rate
+    const total = analytics.stats.totalAccepted + analytics.stats.totalDeclined;
+    if (total > 0) {
+      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / total;
+    }
+
+    // Calculate average response time
+    const respondedRequests = analytics.requests.filter(r => r.responseDate);
+    if (respondedRequests.length > 0) {
+      const totalResponseTime = respondedRequests.reduce((sum, r) => {
+        const sent = new Date(r.sentDate);
+        const responded = new Date(r.responseDate);
+        return sum + (responded - sent);
+      }, 0);
+      analytics.stats.avgResponseTime = totalResponseTime / respondedRequests.length;
+    }
+
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    console.log('[Background] Connection status updated. Acceptance rate:',
+                Math.round(analytics.stats.acceptanceRate * 100) + '%');
+  }
+
+  async getConnectionAnalytics() {
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    return result.connectionAnalytics || { requests: [], stats: {} };
+  }
+
+  // Job Application Methods
+  async saveJobApplication(applicationData) {
+    console.log('[Background] Saving job application:', applicationData.jobTitle);
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+
+    const application = {
+      id: Date.now().toString(),
+      jobId: applicationData.jobId,
+      jobTitle: applicationData.jobTitle,
+      company: applicationData.company,
+      location: applicationData.location,
+      salary: applicationData.salary,
+      workType: applicationData.workType,
+      distance: applicationData.distance,
+      appliedDate: new Date().toISOString(),
+      status: applicationData.status || 'applied',
+      requiresCoverLetter: applicationData.requiresCoverLetter || false,
+      notes: applicationData.notes || '',
+      jobUrl: applicationData.jobUrl
+    };
+
+    jobApps.applications.push(application);
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    console.log('[Background] Job application saved. Total:', jobApps.applications.length);
+  }
+
+  async updateJobApplication(applicationId, updates) {
+    console.log('[Background] Updating job application:', applicationId);
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+
+    const application = jobApps.applications.find(app => app.id === applicationId);
+    if (!application) {
+      console.log('[Background] Application not found:', applicationId);
+      return;
+    }
+
+    Object.assign(application, updates);
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    console.log('[Background] Job application updated:', applicationId);
+  }
+
+  async getJobApplications() {
+    const result = await chrome.storage.local.get(['jobApplications']);
+    return result.jobApplications || { applications: [] };
   }
 }
 

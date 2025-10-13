@@ -145,6 +145,11 @@ class PopupController {
       this.viewAllOpportunities();
     });
 
+    // View analytics
+    document.getElementById('viewAnalytics').addEventListener('click', () => {
+      this.viewAnalytics();
+    });
+
     // Expand network button
     document.getElementById('expandNetwork').addEventListener('click', () => {
       this.expandNetwork();
@@ -477,6 +482,11 @@ class PopupController {
       this.generateOpportunitiesHTML()
     );
     chrome.tabs.create({ url: dataUrl });
+  }
+
+  viewAnalytics() {
+    // Open analytics page in new tab
+    chrome.tabs.create({ url: chrome.runtime.getURL('analytics/analytics.html') });
   }
 
   generateOpportunitiesHTML() {
