@@ -649,15 +649,39 @@ class NetworkExpander {
       if (window.location.href.includes('/search/results/people/')) {
         console.log('[Network Expander] Resuming pending expansion task...');
 
-        // Clear the pending task immediately to prevent loops
-        localStorage.removeItem('networkExpansionPending');
+        // Extract pagination info
+        const connectionsAlreadySent = task.connectionsAlreadySent || 0;
+        const currentPage = task.currentPage || 1;
 
         // If this was an automated task, process the page then continue
         if (task.automated) {
           console.log('[Network Expander] 🤖 Automated mode detected, processing this role then continuing...');
-          await this.processCurrentPageConnections(task.maxConnections);
 
-          // After processing, continue automated expansion if not at limit
+          // Store pending task back temporarily (processCurrentPageConnections may update it for pagination)
+          localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+
+          const totalSent = await this.processCurrentPageConnections(
+            task.maxConnections,
+            connectionsAlreadySent,
+            currentPage
+          );
+
+          // Check if page navigation happened (for pagination)
+          const stillPending = localStorage.getItem('networkExpansionPending');
+          if (stillPending) {
+            const updatedTask = JSON.parse(stillPending);
+            // If the task was updated with new page info, navigation will happen
+            // and we'll resume here again
+            if (updatedTask.currentPage !== currentPage) {
+              console.log(`[Network Expander] Navigating to page ${updatedTask.currentPage}...`);
+              return; // Let navigation happen, will resume on next page
+            }
+          }
+
+          // Clear the pending task (no more pagination)
+          localStorage.removeItem('networkExpansionPending');
+
+          // After processing all pages for this role, continue to next role if not at limit
           if (!this.hasReachedDailyLimit()) {
             console.log('[Network Expander] Continuing automated expansion to next role...');
             await this.runAutomatedExpansion();
@@ -667,6 +691,9 @@ class NetworkExpander {
           }
         } else {
           // Single role expansion (legacy mode)
+          // Store pending task back temporarily
+          localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+
           await this.startExpanding({
             targetRole: task.targetRole,
             maxConnections: task.maxConnections
@@ -679,10 +706,40 @@ class NetworkExpander {
     }
   }
 
-  // Process connections on the current search page
-  async processCurrentPageConnections(maxConnections) {
+  // Find the Next page button for pagination
+  findNextPageButton() {
+    // Try to find pagination "Next" button
+    // LinkedIn uses various selectors for the Next button
+    let nextBtn = document.querySelector('button[aria-label="Next"]');
+
+    if (!nextBtn) {
+      // Try finding by class and text content
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const ariaLabel = btn.getAttribute('aria-label') || '';
+        if (ariaLabel.toLowerCase().includes('next')) {
+          nextBtn = btn;
+          break;
+        }
+      }
+    }
+
+    if (!nextBtn) {
+      // Try finding pagination links with "next" or arrow
+      const links = document.querySelectorAll('a.artdeco-pagination__button--next, a[aria-label*="Next"]');
+      if (links.length > 0) {
+        nextBtn = links[0];
+      }
+    }
+
+    return nextBtn;
+  }
+
+  // Process connections on the current search page (with pagination)
+  async processCurrentPageConnections(maxConnections, connectionsAlreadySent = 0, currentPage = 1) {
     this.isRunning = true;
-    console.log(`[Network Expander] Processing current page (max ${maxConnections} connections)...`);
+    const remaining = maxConnections - connectionsAlreadySent;
+    console.log(`[Network Expander] Processing page ${currentPage} (need ${remaining} more connections, ${connectionsAlreadySent} already sent)...`);
 
     try {
       // Wait for page to settle
@@ -690,20 +747,22 @@ class NetworkExpander {
 
       // Find all Connect buttons on the page
       const connectButtons = this.findAllConnectButtons();
-      console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons on page`);
+      console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons on page ${currentPage}`);
 
       if (connectButtons.length === 0) {
-        console.log('[Network Expander] No Connect buttons found, skipping this page');
-        return 0;
+        console.log(`[Network Expander] No Connect buttons found on page ${currentPage}, moving on...`);
+        return connectionsAlreadySent;
       }
 
       // Shuffle buttons to randomize selection order
       const shuffledButtons = this.shuffleArray([...connectButtons]);
       console.log('[Network Expander] Randomized button order for more natural behavior');
 
-      let connected = 0;
+      let connectedThisPage = 0;
       for (const button of shuffledButtons) {
-        if (connected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
+        const totalConnected = connectionsAlreadySent + connectedThisPage;
+
+        if (totalConnected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
           break;
         }
 
@@ -715,20 +774,52 @@ class NetworkExpander {
 
         const success = await this.sendConnectionRequestByButton(button, true);
         if (success) {
-          connected++;
-          console.log(`[Network Expander] ✅ ${connected}/${maxConnections} connections sent`);
+          connectedThisPage++;
+          const totalConnected = connectionsAlreadySent + connectedThisPage;
+          console.log(`[Network Expander] ✅ ${totalConnected}/${maxConnections} connections sent (${connectedThisPage} on this page)`);
         }
 
         // Long delay between requests (very important!)
         await this.humanDelay(10000, 30000); // 10-30 seconds between requests
       }
 
-      console.log(`[Network Expander] ✅ Page processing complete. Sent ${connected} requests.`);
-      return connected;
+      const totalConnected = connectionsAlreadySent + connectedThisPage;
+      console.log(`[Network Expander] ✅ Page ${currentPage} complete. Sent ${connectedThisPage} on this page, ${totalConnected} total.`);
+
+      // Check if we need to go to the next page
+      if (totalConnected < maxConnections && !this.hasReachedDailyLimit() && this.isRunning) {
+        const nextBtn = this.findNextPageButton();
+
+        if (nextBtn && !nextBtn.disabled) {
+          console.log(`[Network Expander] 📄 Need ${maxConnections - totalConnected} more connections, going to next page...`);
+
+          // Store pagination state before navigating
+          const pending = localStorage.getItem('networkExpansionPending');
+          if (pending) {
+            const task = JSON.parse(pending);
+            // Update task with pagination info
+            task.connectionsAlreadySent = totalConnected;
+            task.currentPage = currentPage + 1;
+            task.timestamp = Date.now();
+            localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+          }
+
+          // Navigate to next page
+          await this.humanDelay(2000, 4000); // Delay before clicking next
+          nextBtn.click();
+
+          // Return here - checkPendingExpansion will resume after page loads
+          return totalConnected;
+        } else {
+          console.log('[Network Expander] No more pages available or Next button disabled');
+        }
+      }
+
+      return totalConnected;
 
     } catch (error) {
       console.error('[Network Expander] Error processing page:', error);
-      return 0;
+      return connectionsAlreadySent;
     }
   }
 
