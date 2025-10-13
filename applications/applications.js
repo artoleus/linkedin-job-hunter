@@ -21,9 +21,12 @@ class ApplicationsTracker {
 
   async loadData() {
     const result = await chrome.runtime.sendMessage({ action: 'getJobApplications' });
-    this.applications = result.applications || [];
+    // Result contains a jobApplications object with applications array
+    const jobApps = result.applications || result;
+    this.applications = jobApps.applications || [];
     this.filteredApplications = this.applications;
     console.log('[Applications] Loaded', this.applications.length, 'applications');
+    console.log('[Applications] Sample data:', this.applications[0]);
   }
 
   setupEventListeners() {
@@ -61,7 +64,7 @@ class ApplicationsTracker {
 
   renderStats() {
     const total = this.applications.length;
-    const submitted = this.applications.filter(app => app.status === 'submitted').length;
+    const submitted = this.applications.filter(app => app.status === 'applied' || app.status === 'submitted').length;
     const draft = this.applications.filter(app => app.status === 'draft').length;
     const failed = this.applications.filter(app => app.status === 'failed').length;
 
@@ -162,7 +165,13 @@ class ApplicationsTracker {
   getStatusBadge(status) {
     const statusClass = `status-${status}`;
     let statusText = status;
-    if (status === 'draft') statusText = 'Draft (Cover Letter)';
+
+    // Map status to display text
+    if (status === 'draft') {
+      statusText = 'Needs Completion';
+    } else if (status === 'applied') {
+      statusText = 'Submitted';
+    }
 
     return `<span class="status-badge ${statusClass}">${this.capitalize(statusText)}</span>`;
   }

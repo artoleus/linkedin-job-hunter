@@ -814,7 +814,16 @@ class JobApplicator {
           // Final submit
           nextBtn.click();
           console.log('[Job Applicator] Submitted application');
-          await this.humanDelay(2000, 3000);
+          await this.humanDelay(3000, 5000);
+
+          // Wait for "Application sent" modal and click Done button
+          const doneBtn = await this.waitForDoneButton();
+          if (doneBtn) {
+            doneBtn.click();
+            console.log('[Job Applicator] ✅ Clicked Done button');
+            await this.humanDelay(1000, 2000);
+          }
+
           return true;
         } else {
           // Next/Review step
@@ -1042,6 +1051,37 @@ class JobApplicator {
         }
       }
     }
+  }
+
+  async waitForDoneButton(maxAttempts = 10) {
+    console.log('[Job Applicator] Waiting for Done button...');
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Look for Done button in success modal
+      const doneBtn = document.querySelector('button[aria-label*="Done"], button.artdeco-modal__confirm-dialog-btn');
+
+      // Also check button text content
+      if (!doneBtn) {
+        const allButtons = document.querySelectorAll('button');
+        for (const button of allButtons) {
+          if (button.textContent.trim().toLowerCase() === 'done') {
+            console.log('[Job Applicator] Found Done button by text');
+            return button;
+          }
+        }
+      }
+
+      if (doneBtn) {
+        console.log('[Job Applicator] Found Done button');
+        return doneBtn;
+      }
+
+      // Wait before next attempt
+      await this.humanDelay(500, 1000);
+    }
+
+    console.log('[Job Applicator] ⚠️ Done button not found after', maxAttempts, 'attempts');
+    return null;
   }
 
   async humanDelay(minMs, maxMs) {
