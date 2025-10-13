@@ -128,6 +128,7 @@ class JobApplicator {
 
     // UK major cities/regions (approximate coordinates)
     const ukLocations = {
+      // Major cities
       'london': { lat: 51.5074, lng: -0.1278 },
       'manchester': { lat: 53.4808, lng: -2.2426 },
       'birmingham': { lat: 52.4862, lng: -1.8904 },
@@ -136,13 +137,50 @@ class JobApplicator {
       'bristol': { lat: 51.4545, lng: -2.5879 },
       'sheffield': { lat: 53.3811, lng: -1.4701 },
       'edinburgh': { lat: 55.9533, lng: -3.1883 },
+      'glasgow': { lat: 55.8642, lng: -4.2518 },
       'cardiff': { lat: 51.4816, lng: -3.1791 },
+      'newcastle': { lat: 54.9783, lng: -1.6178 },
+      'nottingham': { lat: 52.9548, lng: -1.1581 },
+      'southampton': { lat: 50.9097, lng: -1.4044 },
+      'portsmouth': { lat: 50.8198, lng: -1.0880 },
+      'leicester': { lat: 52.6369, lng: -1.1398 },
+      'coventry': { lat: 52.4068, lng: -1.5197 },
+      'hull': { lat: 53.7457, lng: -0.3367 },
+      'stoke': { lat: 53.0027, lng: -2.1794 },
+      'derby': { lat: 52.9225, lng: -1.4746 },
+      'plymouth': { lat: 50.3755, lng: -4.1427 },
+      'wolverhampton': { lat: 52.5864, lng: -2.1285 },
+      'reading': { lat: 51.4543, lng: -0.9781 },
+      'northampton': { lat: 52.2405, lng: -0.9027 },
+      'luton': { lat: 51.8787, lng: -0.4200 },
+      'bolton': { lat: 53.5768, lng: -2.4282 },
+      'aberdeen': { lat: 57.1497, lng: -2.0943 },
+
+      // South East England
       'cambridge': { lat: 52.2053, lng: 0.1218 },
       'oxford': { lat: 51.7520, lng: -1.2577 },
+      'brighton': { lat: 50.8225, lng: -0.1372 },
       'kent': { lat: 51.2787, lng: 0.5217 },
       'sittingbourne': { lat: 51.3411, lng: 0.7337 },
       'canterbury': { lat: 51.2802, lng: 1.0789 },
-      'maidstone': { lat: 51.2704, lng: 0.5227 }
+      'maidstone': { lat: 51.2704, lng: 0.5227 },
+      'ashford': { lat: 51.1465, lng: 0.8750 },
+      'rochester': { lat: 51.3882, lng: 0.5046 },
+      'chatham': { lat: 51.3794, lng: 0.5299 },
+      'gillingham': { lat: 51.3889, lng: 0.5500 },
+      'tunbridge wells': { lat: 51.1320, lng: 0.2630 },
+      'guildford': { lat: 51.2362, lng: -0.5704 },
+      'slough': { lat: 51.5105, lng: -0.5950 },
+      'woking': { lat: 51.3168, lng: -0.5580 },
+      'crawley': { lat: 51.1130, lng: -0.1863 },
+      'worthing': { lat: 50.8142, lng: -0.3714 },
+      'eastbourne': { lat: 50.7684, lng: 0.2905 },
+      'hastings': { lat: 50.8543, lng: 0.5730 },
+
+      // General regions
+      'england': { lat: 52.3555, lng: -1.1743 },
+      'united kingdom': { lat: 54.5973, lng: -3.8142 },
+      'uk': { lat: 54.5973, lng: -3.8142 }
     };
 
     // Check for matches in location string
@@ -201,7 +239,7 @@ class JobApplicator {
         const maxDistance = this.settings.maxHybridDistance || 75;
         const jobCoords = this.estimateLocationCoordinates(location);
 
-        if (jobCoords) {
+        if (jobCoords && jobCoords.lat !== 0 && jobCoords.lng !== 0) {
           const distance = this.calculateDistance(
             this.homeLocation.lat,
             this.homeLocation.lng,
@@ -218,6 +256,9 @@ class JobApplicator {
               distance
             };
           }
+        } else {
+          console.log('[Job Applicator] ⚠️ Could not determine location coordinates for:', location, '- allowing job');
+          // If we can't determine coordinates, allow the job (don't reject it)
         }
       }
 
@@ -314,10 +355,27 @@ class JobApplicator {
     return null;
   }
 
-  // Check if job has Easy Apply
+  // Check if job has Easy Apply - checks within the job card for the indicator
   hasEasyApply(jobCard) {
-    const easyApplyBtn = jobCard.querySelector('.jobs-apply-button--top-card, button[aria-label*="Easy Apply"]');
-    return !!easyApplyBtn;
+    // LinkedIn shows "Easy Apply" badge/text in the job card
+    const cardText = jobCard.textContent.toLowerCase();
+    const hasEasyApplyText = cardText.includes('easy apply');
+
+    console.log('[Job Applicator] Checking Easy Apply for card:', hasEasyApplyText);
+
+    // Also check for Easy Apply button/badge element
+    const easyApplyIndicator = jobCard.querySelector(
+      '.job-card-container__apply-button, ' +
+      '.job-card-list__footer-wrapper button, ' +
+      'button[aria-label*="Easy Apply"], ' +
+      'li-icon[type="lightning-bolt"]'  // Lightning bolt icon indicates Easy Apply
+    );
+
+    if (easyApplyIndicator) {
+      console.log('[Job Applicator] Found Easy Apply indicator element');
+    }
+
+    return hasEasyApplyText || !!easyApplyIndicator;
   }
 
   // Start automated job application process
@@ -558,7 +616,7 @@ class JobApplicator {
 
   async applyToJob(jobData) {
     try {
-      console.log('[Job Applicator] Applying to:', jobData.jobTitle);
+      console.log('[Job Applicator] 🎯 Applying to:', jobData.jobTitle);
 
       // Wait for job details to load
       await this.humanDelay(1000, 2000);
@@ -569,13 +627,42 @@ class JobApplicator {
         return false;
       }
 
-      // Find Easy Apply button using the correct selector
-      const easyApplyBtn = document.querySelector('#jobs-apply-button-id, .jobs-apply-button--top-card, button[aria-label*="Easy Apply"]');
+      // Debug: Log all buttons on the page
+      const allButtons = document.querySelectorAll('button');
+      console.log('[Job Applicator] 🔍 Found', allButtons.length, 'buttons on page');
+
+      // Try multiple selectors to find Easy Apply button
+      let easyApplyBtn = document.querySelector('#jobs-apply-button-id');
+      console.log('[Job Applicator] Checking #jobs-apply-button-id:', !!easyApplyBtn);
 
       if (!easyApplyBtn) {
-        console.log('[Job Applicator] Easy Apply button not found');
+        easyApplyBtn = document.querySelector('.jobs-apply-button--top-card');
+        console.log('[Job Applicator] Checking .jobs-apply-button--top-card:', !!easyApplyBtn);
+      }
+
+      if (!easyApplyBtn) {
+        easyApplyBtn = document.querySelector('button[aria-label*="Easy Apply"]');
+        console.log('[Job Applicator] Checking button[aria-label*="Easy Apply"]:', !!easyApplyBtn);
+      }
+
+      if (!easyApplyBtn) {
+        // Look for any button with "Easy Apply" text
+        for (const button of allButtons) {
+          if (button.textContent.includes('Easy Apply')) {
+            easyApplyBtn = button;
+            console.log('[Job Applicator] ✅ Found Easy Apply button by text content');
+            break;
+          }
+        }
+      }
+
+      if (!easyApplyBtn) {
+        console.log('[Job Applicator] ❌ Easy Apply button not found with any selector');
+        console.log('[Job Applicator] Sample button texts:', Array.from(allButtons).slice(0, 10).map(b => b.textContent.trim()).filter(t => t));
         return false;
       }
+
+      console.log('[Job Applicator] ✅ Found Easy Apply button:', easyApplyBtn.textContent.trim());
 
       // Click Easy Apply
       easyApplyBtn.click();
