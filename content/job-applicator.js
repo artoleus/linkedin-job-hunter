@@ -766,9 +766,9 @@ class JobApplicator {
             }
           });
 
-          // Close modal
-          const closeBtn = document.querySelector('button[aria-label*="Dismiss"], button[data-test-modal-close-btn]');
-          if (closeBtn) closeBtn.click();
+          // Leave modal open so user can return to it later
+          // LinkedIn will auto-save the draft when they dismiss it
+          console.log('[Job Applicator] Leaving modal open for user to complete manually');
 
           return false;
         }
@@ -801,9 +801,9 @@ class JobApplicator {
             }
           });
 
-          // Close modal
-          const closeBtn = document.querySelector('button[aria-label*="Dismiss"], button[data-test-modal-close-btn]');
-          if (closeBtn) closeBtn.click();
+          // Leave modal open so user can return to it later
+          // LinkedIn will auto-save the draft when they dismiss it
+          console.log('[Job Applicator] Leaving modal open for user to complete manually');
 
           return false;
         }
@@ -836,10 +836,14 @@ class JobApplicator {
     const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
     if (!modal) return false;
 
-    // Look for "Additional Questions" heading
+    // Look for "Additional Questions" heading - if not present, this is likely just Contact Info page
     const modalText = modal.textContent;
-    if (modalText.includes('Additional Questions')) {
+    const hasAdditionalQuestions = modalText.includes('Additional Questions');
+
+    if (hasAdditionalQuestions) {
       console.log('[Job Applicator] 🔍 Found "Additional Questions" section');
+    } else {
+      console.log('[Job Applicator] No "Additional Questions" section - likely just Contact Info');
     }
 
     // Find all required fields (marked with * or aria-required)
@@ -847,21 +851,55 @@ class JobApplicator {
     const requiredInputs = modal.querySelectorAll('input[required], input[aria-required="true"]');
     const requiredSelects = modal.querySelectorAll('select[required], select[aria-required="true"]');
 
-    // Check for error messages indicating required fields
-    const errorMessages = modal.querySelectorAll('[class*="error"], [class*="required"]');
-    const hasErrorText = Array.from(errorMessages).some(el =>
-      el.textContent.toLowerCase().includes('please enter') ||
-      el.textContent.toLowerCase().includes('required')
-    );
+    // Check for error messages indicating UNFILLED required fields
+    const errorMessages = modal.querySelectorAll('[class*="error"], [class*="invalid"]');
+    const hasErrorText = Array.from(errorMessages).some(el => {
+      const text = el.textContent.toLowerCase();
+      return text.includes('please enter') ||
+             text.includes('required') ||
+             text.includes('must') ||
+             text.includes('this field');
+    });
 
-    // Look for empty required text areas (custom questions)
+    // Only flag EMPTY required text areas (custom questions that need manual input)
     const emptyRequiredTextAreas = Array.from(requiredTextAreas).filter(ta => !ta.value.trim());
 
-    // Look for required radio/checkbox groups without selection
+    // Only flag EMPTY required inputs (excluding standard fields like email, phone which are auto-filled)
+    const emptyRequiredInputs = Array.from(requiredInputs).filter(input => {
+      // Ignore email, phone, name fields - these are standard and auto-filled
+      const type = input.type;
+      const name = input.name?.toLowerCase() || '';
+      const id = input.id?.toLowerCase() || '';
+
+      const isStandardField =
+        type === 'email' ||
+        type === 'tel' ||
+        name.includes('email') ||
+        name.includes('phone') ||
+        name.includes('name') ||
+        id.includes('email') ||
+        id.includes('phone') ||
+        id.includes('name');
+
+      // Only flag if it's empty AND not a standard field
+      return !isStandardField && !input.value.trim();
+    });
+
+    // Only flag UNSELECTED required selects
+    const emptyRequiredSelects = Array.from(requiredSelects).filter(select =>
+      !select.value || select.value === '' || select.value === 'Select'
+    );
+
+    // Look for required radio/checkbox groups WITHOUT selection
     const radioGroups = modal.querySelectorAll('fieldset');
     const unfilledRadioGroups = Array.from(radioGroups).filter(fieldset => {
       const radios = fieldset.querySelectorAll('input[type="radio"]');
       if (radios.length > 0) {
+        // Check if any radio is required
+        const hasRequiredRadio = Array.from(radios).some(r => r.required || r.getAttribute('aria-required') === 'true');
+        if (!hasRequiredRadio) return false;
+
+        // Check if any is selected
         const hasSelection = Array.from(radios).some(r => r.checked);
         return !hasSelection;
       }
@@ -870,17 +908,22 @@ class JobApplicator {
 
     const hasRequiredFields =
       emptyRequiredTextAreas.length > 0 ||
-      requiredSelects.length > 0 ||
+      emptyRequiredInputs.length > 0 ||
+      emptyRequiredSelects.length > 0 ||
       unfilledRadioGroups.length > 0 ||
       hasErrorText;
 
     if (hasRequiredFields) {
-      console.log('[Job Applicator] Required fields detected:', {
-        textAreas: emptyRequiredTextAreas.length,
-        selects: requiredSelects.length,
-        radioGroups: unfilledRadioGroups.length,
-        hasErrors: hasErrorText
+      console.log('[Job Applicator] ⚠️ Unfilled required fields detected:', {
+        emptyTextAreas: emptyRequiredTextAreas.length,
+        emptyInputs: emptyRequiredInputs.length,
+        emptySelects: emptyRequiredSelects.length,
+        unfilledRadioGroups: unfilledRadioGroups.length,
+        hasErrors: hasErrorText,
+        isAdditionalQuestionsPage: hasAdditionalQuestions
       });
+    } else {
+      console.log('[Job Applicator] ✅ All required fields are filled');
     }
 
     return hasRequiredFields;
