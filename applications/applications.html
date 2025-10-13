@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Applications - LinkedIn Job Hunter</title>
+  <link rel="stylesheet" href="applications.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>💼 Job Applications Tracker</h1>
+      <p class="subtitle">Track and manage your automated job applications</p>
+    </header>
+
+    <!-- Summary Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Applications</div>
+        <div class="stat-value" id="totalApplications">0</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-label">Submitted</div>
+        <div class="stat-value" id="submittedApplications">0</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-label">Drafts (Need Cover Letter)</div>
+        <div class="stat-value" id="draftApplications">0</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-label">Failed</div>
+        <div class="stat-value" id="failedApplications">0</div>
+      </div>
+    </div>
+
+    <!-- Filters and Controls -->
+    <div class="controls-bar">
+      <div class="filters">
+        <input type="text" id="searchInput" placeholder="Search job titles or companies..." class="search-input">
+
+        <select id="statusFilter" class="filter-select">
+          <option value="all">All Statuses</option>
+          <option value="submitted">Submitted</option>
+          <option value="draft">Draft (Cover Letter)</option>
+          <option value="failed">Failed</option>
+        </select>
+
+        <select id="workTypeFilter" class="filter-select">
+          <option value="all">All Work Types</option>
+          <option value="remote">Remote</option>
+          <option value="hybrid">Hybrid</option>
+          <option value="onsite">On-site</option>
+        </select>
+      </div>
+
+      <div class="control-buttons">
+        <button id="refreshBtn" class="btn btn-secondary">↻ Refresh</button>
+        <button id="exportBtn" class="btn btn-primary">📥 Export CSV</button>
+      </div>
+    </div>
+
+    <!-- Applications Table -->
+    <div class="table-container">
+      <table class="applications-table">
+        <thead>
+          <tr>
+            <th>Job Title</th>
+            <th>Company</th>
+            <th>Work Type</th>
+            <th>Salary</th>
+            <th>Location</th>
+            <th>Applied Date</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="applicationsTableBody">
+          <tr>
+            <td colspan="8" class="no-data">No applications found</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="applications.js"></script>
+</body>
+</html>

@@ -6,6 +6,7 @@ class LinkedInJobHunter {
     this.crawler = new window.NetworkCrawler(this.storage);
     this.detector = new window.JobDetector(this.storage);
     this.networkExpander = new window.NetworkExpander(this.storage);
+    this.jobApplicator = new window.JobApplicator(this.storage);
 
     this.isInitialized = false;
     this.settings = {};
@@ -361,6 +362,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Job Hunter] Stop network expansion requested...');
       hunter.networkExpander.stopExpanding();
       sendResponse({ success: true });
+      return true;
+
+    case 'startJobApplication':
+      console.log('[Job Hunter] Job application requested...');
+      if (!hunter.jobApplicator) {
+        console.error('[Job Hunter] jobApplicator not initialized!');
+        sendResponse({ error: 'Job applicator not initialized' });
+        return false;
+      }
+      sendResponse({ success: true });
+      hunter.jobApplicator.startApplying().catch((error) => {
+        console.error('[Job Hunter] Job application error:', error);
+      });
+      return false;
+
+    case 'stopJobApplication':
+      console.log('[Job Hunter] Stop job application requested...');
+      hunter.jobApplicator.stopApplying();
+      sendResponse({ success: true });
+      return true;
+
+    case 'getJobApplicationStatus':
+      console.log('[Job Hunter] Getting job application status...');
+      const jobStatus = hunter.jobApplicator.getStatus();
+      sendResponse(jobStatus);
       return true;
 
     default:

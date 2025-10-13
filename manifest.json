@@ -27,6 +27,7 @@
         "content/job-detector.js",
         "content/network-crawler.js",
         "content/network-expander.js",
+        "content/job-applicator.js",
         "content/linkedin.js"
       ],
       "run_at": "document_end"

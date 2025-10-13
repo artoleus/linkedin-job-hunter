@@ -28,13 +28,15 @@ class PopupController {
       this.setupEventListeners();
       this.updateUI();
 
-      // Load network status
+      // Load network status and job application status
       await this.updateNetworkStatus();
+      await this.updateJobApplicationStatus();
 
       // Auto-refresh every 5 seconds
       setInterval(() => {
         this.refreshData();
         this.updateNetworkStatus();
+        this.updateJobApplicationStatus();
       }, 5000);
 
     } catch (error) {
@@ -150,6 +152,11 @@ class PopupController {
       this.viewAnalytics();
     });
 
+    // View applications
+    document.getElementById('viewApplications').addEventListener('click', () => {
+      this.viewApplications();
+    });
+
     // Expand network button
     document.getElementById('expandNetwork').addEventListener('click', () => {
       this.expandNetwork();
@@ -160,14 +167,27 @@ class PopupController {
       this.stopNetworkExpansion();
     });
 
+    // Start job application button
+    document.getElementById('startJobApplication').addEventListener('click', () => {
+      this.startJobApplication();
+    });
+
+    // Stop job application button
+    document.getElementById('stopJobApplication').addEventListener('click', () => {
+      this.stopJobApplication();
+    });
+
     // Track when user is editing settings fields
     const settingsInputs = [
       'maxProfiles', 'minDelay', 'maxDelay', 'keywords', 'targetRoles',
-      'maxDailyInvites', 'connectionsPerRole'
+      'maxDailyInvites', 'connectionsPerRole',
+      'maxDailyApplications', 'targetJobRoles', 'minSalary', 'maxSalary',
+      'autoFillName', 'autoFillEmail', 'autoFillPhone'
     ];
 
     const checkboxInputs = [
-      'usePersonalizedMessages', 'targetHiringOnly'
+      'usePersonalizedMessages', 'targetHiringOnly',
+      'workTypeRemote', 'workTypeHybrid', 'workTypeOnsite'
     ];
 
     settingsInputs.forEach(id => {
@@ -288,6 +308,21 @@ class PopupController {
       this.settings.usePersonalizedMessages !== false; // Default to true
     document.getElementById('targetHiringOnly').checked =
       this.settings.targetHiringOnly === true; // Default to false
+
+    // Job application settings
+    document.getElementById('maxDailyApplications').value = this.settings.maxDailyApplications || 20;
+    document.getElementById('targetJobRoles').value = (this.settings.targetJobRoles || []).join(', ');
+    document.getElementById('minSalary').value = this.settings.minSalary || '';
+    document.getElementById('maxSalary').value = this.settings.maxSalary || '';
+
+    const workTypes = this.settings.workTypes || ['remote', 'hybrid'];
+    document.getElementById('workTypeRemote').checked = workTypes.includes('remote');
+    document.getElementById('workTypeHybrid').checked = workTypes.includes('hybrid');
+    document.getElementById('workTypeOnsite').checked = workTypes.includes('onsite');
+
+    document.getElementById('autoFillName').value = this.settings.autoFillName || '';
+    document.getElementById('autoFillEmail').value = this.settings.autoFillEmail || '';
+    document.getElementById('autoFillPhone').value = this.settings.autoFillPhone || '';
   }
 
   async updateNetworkStatus() {
@@ -430,6 +465,100 @@ class PopupController {
     }
   }
 
+  async startJobApplication() {
+    console.log('[Popup] startJobApplication() called');
+    const btn = document.getElementById('startJobApplication');
+    const originalText = btn.textContent;
+
+    try {
+      btn.textContent = 'Starting...';
+      btn.disabled = true;
+
+      console.log('[Popup] Sending startJobApplication message to content script...');
+      const response = await this.sendMessageToContentScript('startJobApplication');
+
+      console.log('[Popup] Received response:', response);
+
+      if (response.error) {
+        this.showError('Please refresh the LinkedIn page first');
+        console.error('Job application error:', response.error);
+      } else if (response.success) {
+        await this.updateJobApplicationStatus();
+        this.showSuccess('Job application started! This will take several minutes.');
+      } else {
+        this.showError('Job application failed');
+      }
+    } catch (error) {
+      console.error('Job application error:', error);
+      this.showError('Please refresh LinkedIn page and try again');
+    } finally {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+  }
+
+  async stopJobApplication() {
+    const btn = document.getElementById('stopJobApplication');
+    const originalText = btn.textContent;
+
+    try {
+      btn.textContent = 'Stopping...';
+      btn.disabled = true;
+
+      const response = await this.sendMessageToContentScript('stopJobApplication');
+
+      if (response.error) {
+        this.showError('Failed to stop job application');
+        console.error('Stop job application error:', response.error);
+      } else if (response.success) {
+        await this.updateJobApplicationStatus();
+        this.showSuccess('Job application stopped');
+      }
+    } catch (error) {
+      console.error('Stop job application error:', error);
+      this.showError('Failed to stop job application');
+    } finally {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+  }
+
+  async updateJobApplicationStatus() {
+    try {
+      const response = await this.sendMessageToContentScript('getJobApplicationStatus');
+      if (!response.error && response.dailyLimits) {
+        const { dailyLimits, remainingApplications, isRunning } = response;
+        const maxApplications = this.settings.maxDailyApplications || 20;
+
+        document.getElementById('todaysApplications').textContent = dailyLimits.applicationsSent || 0;
+        document.getElementById('applicationLimit').textContent = maxApplications;
+
+        const startBtn = document.getElementById('startJobApplication');
+        const stopBtn = document.getElementById('stopJobApplication');
+
+        // Show/hide buttons based on running status
+        if (isRunning) {
+          startBtn.style.display = 'none';
+          stopBtn.style.display = 'block';
+        } else {
+          startBtn.style.display = 'block';
+          stopBtn.style.display = 'none';
+
+          // Disable button if at limit
+          if (remainingApplications <= 0) {
+            startBtn.disabled = true;
+            startBtn.textContent = 'Daily Limit Reached';
+          } else {
+            startBtn.disabled = false;
+            startBtn.textContent = 'Auto Apply to Jobs';
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update job application status:', error);
+    }
+  }
+
   toggleSettings() {
     const panel = document.getElementById('settingsPanel');
     panel.classList.toggle('hidden');
@@ -437,6 +566,12 @@ class PopupController {
 
   async saveSettings() {
     try {
+      // Collect work types
+      const workTypes = [];
+      if (document.getElementById('workTypeRemote').checked) workTypes.push('remote');
+      if (document.getElementById('workTypeHybrid').checked) workTypes.push('hybrid');
+      if (document.getElementById('workTypeOnsite').checked) workTypes.push('onsite');
+
       const newSettings = {
         ...this.settings,
         maxProfilesPerDay: parseInt(document.getElementById('maxProfiles').value),
@@ -449,7 +584,20 @@ class PopupController {
         maxDailyInvites: parseInt(document.getElementById('maxDailyInvites').value),
         connectionsPerRole: parseInt(document.getElementById('connectionsPerRole').value),
         usePersonalizedMessages: document.getElementById('usePersonalizedMessages').checked,
-        targetHiringOnly: document.getElementById('targetHiringOnly').checked
+        targetHiringOnly: document.getElementById('targetHiringOnly').checked,
+
+        // Job application settings
+        maxDailyApplications: parseInt(document.getElementById('maxDailyApplications').value),
+        targetJobRoles: document.getElementById('targetJobRoles').value
+          .split(',').map(s => s.trim()).filter(s => s),
+        minSalary: document.getElementById('minSalary').value ?
+          parseInt(document.getElementById('minSalary').value) : null,
+        maxSalary: document.getElementById('maxSalary').value ?
+          parseInt(document.getElementById('maxSalary').value) : null,
+        workTypes: workTypes,
+        autoFillName: document.getElementById('autoFillName').value.trim(),
+        autoFillEmail: document.getElementById('autoFillEmail').value.trim(),
+        autoFillPhone: document.getElementById('autoFillPhone').value.trim()
       };
 
       // Send to background script
@@ -487,6 +635,11 @@ class PopupController {
   viewAnalytics() {
     // Open analytics page in new tab
     chrome.tabs.create({ url: chrome.runtime.getURL('analytics/analytics.html') });
+  }
+
+  viewApplications() {
+    // Open applications page in new tab
+    chrome.tabs.create({ url: chrome.runtime.getURL('applications/applications.html') });
   }
 
   generateOpportunitiesHTML() {
