@@ -322,24 +322,39 @@ class JobApplicator {
 
   // Start automated job application process
   async startApplying() {
+    console.log('[Job Applicator] 🚀 startApplying() called');
+    console.log('[Job Applicator] Settings:', this.settings);
+    console.log('[Job Applicator] Is running?', this.isRunning);
+    console.log('[Job Applicator] Daily limits:', this.dailyLimits);
+
     if (this.isRunning) {
-      console.log('[Job Applicator] Already running');
+      console.log('[Job Applicator] ⚠️ Already running, exiting');
       return;
     }
 
     if (this.hasReachedDailyLimit()) {
-      console.log('[Job Applicator] Daily limit reached');
+      console.log('[Job Applicator] ⚠️ Daily limit reached, exiting');
       return;
     }
 
     const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
+    console.log('[Job Applicator] Target roles from settings:', targetRoles);
+
+    if (targetRoles.length === 0) {
+      console.error('[Job Applicator] ❌ No target job roles configured! Please add roles in settings.');
+      return;
+    }
+
     const keywords = targetRoles.join(' OR ');
     const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keywords)}&f_AL=true`;
     const currentUrl = window.location.href;
 
+    console.log('[Job Applicator] Current URL:', currentUrl);
+    console.log('[Job Applicator] Target search URL:', searchUrl);
+
     // Check if we need to navigate to the search page with keywords
     if (!currentUrl.includes('/jobs/search/') || !currentUrl.includes('keywords=')) {
-      console.log('[Job Applicator] Navigating to job search with keywords...');
+      console.log('[Job Applicator] 🔄 Navigating to job search with keywords...');
       console.log('[Job Applicator] Target roles:', targetRoles);
       console.log('[Job Applicator] Search URL:', searchUrl);
       this.navigateToJobsSearch();
@@ -347,15 +362,16 @@ class JobApplicator {
     }
 
     this.isRunning = true;
-    console.log('[Job Applicator] 🎯 Starting automated job application...');
-    console.log('[Job Applicator] Target roles:', targetRoles);
+    console.log('[Job Applicator] ✅ On search page, starting job processing...');
+    console.log('[Job Applicator] 🎯 Target roles:', targetRoles);
 
     try {
       await this.processJobListings();
     } catch (error) {
-      console.error('[Job Applicator] Error during application process:', error);
+      console.error('[Job Applicator] ❌ Error during application process:', error);
     } finally {
       this.isRunning = false;
+      console.log('[Job Applicator] ✅ Finished, isRunning set to false');
     }
   }
 

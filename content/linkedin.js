@@ -365,15 +365,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'startJobApplication':
-      console.log('[Job Hunter] Job application requested...');
+      console.log('[Job Hunter] ✅ Job application requested...');
       if (!hunter.jobApplicator) {
-        console.error('[Job Hunter] jobApplicator not initialized!');
+        console.error('[Job Hunter] ❌ jobApplicator not initialized!');
         sendResponse({ error: 'Job applicator not initialized' });
         return false;
       }
+      console.log('[Job Hunter] ✅ Job applicator exists, calling startApplying()...');
       sendResponse({ success: true });
       hunter.jobApplicator.startApplying().catch((error) => {
-        console.error('[Job Hunter] Job application error:', error);
+        console.error('[Job Hunter] ❌ Job application error:', error);
       });
       return false;
 
