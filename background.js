@@ -171,6 +171,11 @@ class BackgroundService {
           sendResponse({ applications });
           break;
 
+        case 'deleteJobApplication':
+          await this.deleteJobApplication(request.applicationId);
+          sendResponse({ success: true });
+          break;
+
         default:
           sendResponse({ error: 'Unknown action' });
       }
@@ -370,6 +375,18 @@ class BackgroundService {
   async getJobApplications() {
     const result = await chrome.storage.local.get(['jobApplications']);
     return result.jobApplications || { applications: [] };
+  }
+
+  async deleteJobApplication(applicationId) {
+    console.log('[Background] Deleting job application:', applicationId);
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+
+    // Filter out the application to delete
+    jobApps.applications = jobApps.applications.filter(app => app.id !== applicationId);
+
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    console.log('[Background] Job application deleted. Remaining:', jobApps.applications.length);
   }
 }
 

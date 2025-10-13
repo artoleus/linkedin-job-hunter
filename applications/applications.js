@@ -55,6 +55,14 @@ class ApplicationsTracker {
       await this.loadData();
       this.render();
     });
+
+    // Delete button event delegation
+    document.getElementById('applicationsTableBody').addEventListener('click', async (e) => {
+      if (e.target.classList.contains('delete-btn')) {
+        const appId = e.target.dataset.appId;
+        await this.deleteApplication(appId);
+      }
+    });
   }
 
   render() {
@@ -104,6 +112,7 @@ class ApplicationsTracker {
           <td>
             <a href="${app.jobUrl}" target="_blank" class="action-link">View Job</a>
             ${app.status === 'draft' ? `<a href="${app.jobUrl}" target="_blank" class="action-link">Complete</a>` : ''}
+            <button class="delete-btn" data-app-id="${app.id}" title="Delete application">Delete</button>
           </td>
         </tr>
       `;
@@ -203,6 +212,34 @@ class ApplicationsTracker {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  async deleteApplication(appId) {
+    if (!confirm('Are you sure you want to delete this application? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      console.log('[Applications] Deleting application:', appId);
+
+      // Send message to background script to delete
+      await chrome.runtime.sendMessage({
+        action: 'deleteJobApplication',
+        applicationId: appId
+      });
+
+      // Remove from local array
+      this.applications = this.applications.filter(app => app.id !== appId);
+      this.filteredApplications = this.filteredApplications.filter(app => app.id !== appId);
+
+      // Re-render
+      this.render();
+
+      console.log('[Applications] Application deleted successfully');
+    } catch (error) {
+      console.error('[Applications] Error deleting application:', error);
+      alert('Failed to delete application. Please try again.');
+    }
   }
 }
 
