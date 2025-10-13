@@ -58,6 +58,52 @@ class JobApplicator {
     return this.dailyLimits.applicationsSubmitted >= maxApplications;
   }
 
+  // Flexible role matching - checks if any keyword from target roles appears in job title
+  matchesTargetRoles(jobTitle, targetRoles) {
+    if (!targetRoles || targetRoles.length === 0) return false;
+
+    const titleLower = jobTitle.toLowerCase();
+
+    // Check each target role
+    for (const role of targetRoles) {
+      const roleLower = role.toLowerCase().trim();
+
+      // Split role into individual keywords (e.g., "IT Manager" -> ["it", "manager"])
+      const keywords = roleLower.split(/\s+/);
+
+      // Check if ALL keywords from this role appear in the title (order doesn't matter)
+      const allKeywordsMatch = keywords.every(keyword => {
+        // Handle common abbreviations and variations
+        if (keyword === 'grc') {
+          return titleLower.includes('grc') || titleLower.includes('governance') ||
+                 titleLower.includes('risk') || titleLower.includes('compliance');
+        }
+        if (keyword === 'vciso' || keyword === 'ciso') {
+          return titleLower.includes('ciso') || titleLower.includes('vciso') ||
+                 (titleLower.includes('security') && titleLower.includes('officer'));
+        }
+        if (keyword === 'ai') {
+          return titleLower.includes(' ai ') || titleLower.includes('ai ') ||
+                 titleLower.includes(' ai') || titleLower.includes('artificial intelligence');
+        }
+        if (keyword === 'iso27001') {
+          return titleLower.includes('iso') || titleLower.includes('27001') ||
+                 titleLower.includes('information security');
+        }
+
+        // Standard keyword check
+        return titleLower.includes(keyword);
+      });
+
+      if (allKeywordsMatch) {
+        console.log('[Job Applicator] ✅ Matched role:', role, 'in title:', jobTitle);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   // Calculate distance between two coordinates using Haversine formula
   calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 3959; // Earth's radius in miles
@@ -132,14 +178,14 @@ class JobApplicator {
         salary
       });
 
-      // Check role match
+      // Check role match - use flexible keyword matching
       const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
-      const roleMatches = targetRoles.some(role =>
-        jobTitle.toLowerCase().includes(role.toLowerCase())
-      );
+      const roleMatches = this.matchesTargetRoles(jobTitle, targetRoles);
 
       if (!roleMatches) {
         console.log('[Job Applicator] Job title does not match target roles');
+        console.log('[Job Applicator] Title:', jobTitle);
+        console.log('[Job Applicator] Target roles:', targetRoles);
         return { matches: false, reason: 'Title does not match target roles' };
       }
 
@@ -211,7 +257,22 @@ class JobApplicator {
 
   extractJobTitle(jobCard) {
     const titleElement = jobCard.querySelector('.job-card-list__title, .job-card-container__link');
-    return titleElement ? titleElement.textContent.trim() : 'Unknown Title';
+    if (!titleElement) return 'Unknown Title';
+
+    let title = titleElement.textContent.trim();
+
+    // Remove duplicate text (LinkedIn sometimes duplicates the title for accessibility)
+    const words = title.split(/\s+/);
+    const halfLength = Math.floor(words.length / 2);
+    const firstHalf = words.slice(0, halfLength).join(' ');
+    const secondHalf = words.slice(halfLength).join(' ');
+
+    // If first half matches second half, it's duplicated
+    if (firstHalf === secondHalf && halfLength > 0) {
+      title = firstHalf;
+    }
+
+    return title;
   }
 
   extractCompany(jobCard) {
@@ -316,15 +377,23 @@ class JobApplicator {
         return false;
       }
 
-      const fullTitle = descriptionTitle.textContent.trim();
+      let fullTitle = descriptionTitle.textContent.trim();
+
+      // Remove duplicate text in full title too
+      const words = fullTitle.split(/\s+/);
+      const halfLength = Math.floor(words.length / 2);
+      const firstHalf = words.slice(0, halfLength).join(' ');
+      const secondHalf = words.slice(halfLength).join(' ');
+      if (firstHalf === secondHalf && halfLength > 0) {
+        fullTitle = firstHalf;
+      }
+
       console.log('[Job Applicator] Card title:', cardTitle);
       console.log('[Job Applicator] Full title:', fullTitle);
 
-      // Check if the target roles match the FULL title (not just card title)
+      // Check if the target roles match the FULL title using flexible matching
       const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
-      const roleMatches = targetRoles.some(role =>
-        fullTitle.toLowerCase().includes(role.toLowerCase())
-      );
+      const roleMatches = this.matchesTargetRoles(fullTitle, targetRoles);
 
       if (!roleMatches) {
         console.log('[Job Applicator] ⚠️ Full job title does not match target roles');
@@ -345,50 +414,122 @@ class JobApplicator {
   async processJobListings() {
     console.log('[Job Applicator] Processing job listings...');
 
-    // Wait for page to load
-    await this.humanDelay(3000, 5000);
+    let totalProcessed = 0;
+    let currentPage = 1;
+    const maxPages = 5; // Process up to 5 pages
 
-    // Find all job cards
-    const jobCards = document.querySelectorAll('.job-card-container, .jobs-search-results__list-item');
-    console.log('[Job Applicator] Found', jobCards.length, 'job cards');
+    while (currentPage <= maxPages && !this.hasReachedDailyLimit() && this.isRunning) {
+      console.log('[Job Applicator] 📄 Processing page', currentPage);
 
-    let processed = 0;
-    for (const jobCard of jobCards) {
+      // Wait for page to load
+      await this.humanDelay(3000, 5000);
+
+      // Find all job cards
+      const jobCards = document.querySelectorAll('.job-card-container, .jobs-search-results__list-item');
+      console.log('[Job Applicator] Found', jobCards.length, 'job cards on page', currentPage);
+
+      if (jobCards.length === 0) {
+        console.log('[Job Applicator] No more jobs found, stopping pagination');
+        break;
+      }
+
+      let pageProcessed = 0;
+      for (const jobCard of jobCards) {
+        if (this.hasReachedDailyLimit() || !this.isRunning) {
+          break;
+        }
+
+        // Check if matches criteria
+        const matchResult = await this.matchesJobCriteria(jobCard);
+
+        if (!matchResult.matches) {
+          console.log('[Job Applicator] Skipping job:', matchResult.reason);
+          continue;
+        }
+
+        // Check if has Easy Apply
+        if (!this.hasEasyApply(jobCard)) {
+          console.log('[Job Applicator] Job does not have Easy Apply, skipping');
+          continue;
+        }
+
+        // Click job to open details
+        const jobLink = jobCard.querySelector('a.job-card-container__link, a.job-card-list__title');
+        if (jobLink) {
+          jobLink.click();
+          await this.humanDelay(2000, 4000);
+
+          // Apply to job
+          const applied = await this.applyToJob(matchResult.jobData);
+          if (applied) {
+            pageProcessed++;
+            totalProcessed++;
+          }
+
+          await this.humanDelay(5000, 10000); // Delay between applications
+        }
+      }
+
+      console.log('[Job Applicator] Page', currentPage, 'complete. Processed', pageProcessed, 'applications');
+
+      // Check if we should continue to next page
       if (this.hasReachedDailyLimit() || !this.isRunning) {
         break;
       }
 
-      // Check if matches criteria
-      const matchResult = await this.matchesJobCriteria(jobCard);
-
-      if (!matchResult.matches) {
-        console.log('[Job Applicator] Skipping job:', matchResult.reason);
-        continue;
+      // Try to navigate to next page
+      const nextPageSuccess = await this.navigateToNextPage(currentPage + 1);
+      if (!nextPageSuccess) {
+        console.log('[Job Applicator] Could not navigate to next page, stopping');
+        break;
       }
 
-      // Check if has Easy Apply
-      if (!this.hasEasyApply(jobCard)) {
-        console.log('[Job Applicator] Job does not have Easy Apply, skipping');
-        continue;
-      }
-
-      // Click job to open details
-      const jobLink = jobCard.querySelector('a.job-card-container__link, a.job-card-list__title');
-      if (jobLink) {
-        jobLink.click();
-        await this.humanDelay(2000, 4000);
-
-        // Apply to job
-        const applied = await this.applyToJob(matchResult.jobData);
-        if (applied) {
-          processed++;
-        }
-
-        await this.humanDelay(5000, 10000); // Delay between applications
-      }
+      currentPage++;
     }
 
-    console.log('[Job Applicator] ✅ Processed', processed, 'applications');
+    console.log('[Job Applicator] ✅ Processed', totalProcessed, 'total applications across', currentPage, 'pages');
+  }
+
+  async navigateToNextPage(pageNumber) {
+    try {
+      // Scroll to bottom to trigger pagination
+      window.scrollTo(0, document.body.scrollHeight);
+      await this.humanDelay(1000, 2000);
+
+      // Look for pagination buttons
+      const paginationButtons = document.querySelectorAll('button[aria-label*="Page"]');
+
+      for (const button of paginationButtons) {
+        const label = button.getAttribute('aria-label');
+        if (label && label.includes(`Page ${pageNumber}`)) {
+          console.log('[Job Applicator] Clicking page', pageNumber, 'button');
+          button.click();
+          await this.humanDelay(3000, 5000);
+          return true;
+        }
+      }
+
+      // Alternative: Look for "Next" button
+      const nextButton = document.querySelector('button[aria-label*="Next"], button[aria-label*="next"]');
+      if (nextButton && !nextButton.disabled) {
+        console.log('[Job Applicator] Clicking Next button');
+        nextButton.click();
+        await this.humanDelay(3000, 5000);
+        return true;
+      }
+
+      // If no buttons, try modifying URL
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.set('start', (pageNumber - 1) * 25); // LinkedIn shows 25 jobs per page
+      console.log('[Job Applicator] Navigating to:', currentUrl.href);
+      window.location.href = currentUrl.href;
+      await this.humanDelay(5000, 7000); // Wait longer for page navigation
+      return true;
+
+    } catch (error) {
+      console.error('[Job Applicator] Error navigating to next page:', error);
+      return false;
+    }
   }
 
   async applyToJob(jobData) {
