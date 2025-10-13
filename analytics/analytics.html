@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn Job Hunter - Connection Analytics</title>
+  <link rel="stylesheet" href="analytics.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎯 Connection Analytics</h1>
+      <p class="subtitle">Track your networking performance</p>
+    </header>
+
+    <!-- Summary Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="totalSent">0</div>
+        <div class="stat-label">Total Sent</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-value" id="totalAccepted">0</div>
+        <div class="stat-label">Accepted</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-value" id="totalPending">0</div>
+        <div class="stat-label">Pending</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-value" id="totalDeclined">0</div>
+        <div class="stat-label">Declined</div>
+      </div>
+      <div class="stat-card primary">
+        <div class="stat-value" id="acceptanceRate">0%</div>
+        <div class="stat-label">Acceptance Rate</div>
+      </div>
+      <div class="stat-card info">
+        <div class="stat-value" id="avgResponseTime">--</div>
+        <div class="stat-label">Avg Response Time</div>
+      </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="charts-grid">
+      <div class="chart-container">
+        <h3>Acceptance Rate by Role</h3>
+        <canvas id="roleChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>Requests by Time of Day</h3>
+        <canvas id="timeChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>Requests by Day of Week</h3>
+        <canvas id="dayChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>Status Distribution</h3>
+        <canvas id="statusChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Recent Requests Table -->
+    <div class="table-section">
+      <h3>Recent Connection Requests</h3>
+      <div class="table-controls">
+        <input type="text" id="searchInput" placeholder="Search by name or role..." />
+        <select id="statusFilter">
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="accepted">Accepted</option>
+          <option value="declined">Declined</option>
+        </select>
+        <select id="roleFilter">
+          <option value="all">All Roles</option>
+        </select>
+      </div>
+      <div class="table-wrapper">
+        <table id="requestsTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Role</th>
+              <th>Sent Date</th>
+              <th>Status</th>
+              <th>Response Time</th>
+              <th>Time of Day</th>
+            </tr>
+          </thead>
+          <tbody id="requestsTableBody">
+            <tr>
+              <td colspan="6" class="no-data">No connection requests yet</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Export Button -->
+    <div class="actions">
+      <button id="exportBtn" class="btn btn-primary">Export to CSV</button>
+      <button id="refreshBtn" class="btn btn-secondary">Refresh Data</button>
+      <button id="addTestDataBtn" class="btn btn-secondary" style="background: #ff9800;">Add Test Data</button>
+    </div>
+  </div>
+
+  <script src="../lib/chart.min.js"></script>
+  <script src="analytics.js"></script>
+</body>
+</html>

@@ -27,6 +27,7 @@
         "content/job-detector.js",
         "content/network-crawler.js",
         "content/network-expander.js",
+        "content/job-applicator.js",
         "content/linkedin.js"
       ],
       "run_at": "document_end"
@@ -46,8 +47,8 @@
   
   "web_accessible_resources": [
     {
-      "resources": ["content/*"],
-      "matches": ["https://*.linkedin.com/*"]
+      "resources": ["content/*", "analytics/*", "applications/*", "lib/*"],
+      "matches": ["https://*.linkedin.com/*", "https://*/*", "http://*/*"]
     }
   ]
 }

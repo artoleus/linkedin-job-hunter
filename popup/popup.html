@@ -51,7 +51,7 @@
         <div class="stat-item">
           <span class="stat-label">Today's Invites:</span>
           <span class="stat-value" id="todaysInvites">0</span>
-          <span class="stat-limit">/ <span id="inviteLimit">15</span></span>
+          <span class="stat-limit">/ <span id="inviteLimit">30</span></span>
         </div>
       </div>
       <div class="controls">
@@ -65,6 +65,27 @@
       <small class="network-hint">Sends personalized connection requests to professionals in your target roles</small>
     </div>
 
+    <!-- Job Application Section -->
+    <div class="network-section">
+      <h3>💼 Auto Apply Jobs</h3>
+      <div class="network-stats">
+        <div class="stat-item">
+          <span class="stat-label">Today's Applications:</span>
+          <span class="stat-value" id="todaysApplications">0</span>
+          <span class="stat-limit">/ <span id="applicationLimit">20</span></span>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="startJobApplication" class="btn btn-primary">
+          Auto Apply to Jobs
+        </button>
+        <button id="stopJobApplication" class="btn btn-secondary" style="display: none;">
+          Stop Application
+        </button>
+      </div>
+      <small class="network-hint">Automatically applies to Easy Apply jobs matching your criteria (role, location, salary, remote/hybrid)</small>
+    </div>
+
     <!-- Recent Opportunities -->
     <div class="opportunities-section">
       <h3>Recent Opportunities</h3>
@@ -75,6 +96,12 @@
       </div>
       <button id="viewAllOpportunities" class="btn btn-link">
         View All Opportunities
+      </button>
+      <button id="viewAnalytics" class="btn btn-link">
+        📊 View Analytics
+      </button>
+      <button id="viewApplications" class="btn btn-link">
+        💼 View Applications
       </button>
     </div>
 
@@ -143,6 +170,69 @@
           Only Connect with People Actively Hiring
         </label>
         <small>Uses LinkedIn's "Hiring" filter to target recruiters and hiring managers posting jobs</small>
+      </div>
+
+      <h4>Job Application Settings</h4>
+
+      <div class="setting-group">
+        <label for="maxDailyApplications">Max Daily Applications:</label>
+        <input type="number" id="maxDailyApplications" min="1" max="50" value="20">
+        <small>Maximum job applications per day (1-50, recommended: 20)</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="targetJobRoles">Target Job Roles (comma-separated):</label>
+        <textarea id="targetJobRoles" rows="2" placeholder="software engineer, developer, full stack engineer"></textarea>
+        <small>Job titles to search for</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="minSalary">Minimum Salary (£):</label>
+        <input type="number" id="minSalary" min="0" step="1000" placeholder="e.g. 40000">
+        <small>Leave empty for no minimum</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="maxSalary">Maximum Salary (£):</label>
+        <input type="number" id="maxSalary" min="0" step="1000" placeholder="e.g. 80000">
+        <small>Leave empty for no maximum</small>
+      </div>
+
+      <div class="setting-group">
+        <label>Work Types:</label>
+        <div style="margin-top: 8px;">
+          <label style="display: block; margin-bottom: 4px;">
+            <input type="checkbox" id="workTypeRemote" checked>
+            Remote
+          </label>
+          <label style="display: block; margin-bottom: 4px;">
+            <input type="checkbox" id="workTypeHybrid" checked>
+            Hybrid (max 75 miles from Sittingbourne, Kent)
+          </label>
+          <label style="display: block;">
+            <input type="checkbox" id="workTypeOnsite">
+            On-site
+          </label>
+        </div>
+        <small>Select which work types to apply for</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="autoFillName">Your Full Name:</label>
+        <input type="text" id="autoFillName" placeholder="John Smith">
+        <small>For auto-filling application forms</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="autoFillEmail">Your Email:</label>
+        <input type="email" id="autoFillEmail" placeholder="john.smith@example.com">
+        <small>For auto-filling application forms</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="autoFillPhone">Your Phone:</label>
+        <input type="tel" id="autoFillPhone" placeholder="+44 7XXX XXXXXX">
+        <small>For auto-filling application forms</small>
       </div>
 
       <div class="settings-actions">

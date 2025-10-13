@@ -6,6 +6,7 @@ class LinkedInJobHunter {
     this.crawler = new window.NetworkCrawler(this.storage);
     this.detector = new window.JobDetector(this.storage);
     this.networkExpander = new window.NetworkExpander(this.storage);
+    this.jobApplicator = new window.JobApplicator(this.storage);
 
     this.isInitialized = false;
     this.settings = {};
@@ -336,15 +337,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'expandNetwork':
-      console.log('[Job Hunter] Network expansion requested...');
-      hunter.networkExpander.startExpanding(request.options).then(() => {
-        console.log('[Job Hunter] Network expansion started successfully');
-        sendResponse({ success: true });
-      }).catch((error) => {
+      console.log('[Job Hunter] Network expansion requested with options:', request.options);
+      console.log('[Job Hunter] networkExpander exists?', !!hunter.networkExpander);
+      if (!hunter.networkExpander) {
+        console.error('[Job Hunter] networkExpander not initialized!');
+        sendResponse({ error: 'Network expander not initialized' });
+        return false;
+      }
+      // Send response immediately before starting expansion (which may navigate away)
+      sendResponse({ success: true });
+      // Start expansion asynchronously (don't wait for it)
+      hunter.networkExpander.startExpanding(request.options).catch((error) => {
         console.error('[Job Hunter] Network expansion error:', error);
-        sendResponse({ error: error.message });
       });
-      return true;
+      return false; // Response already sent
 
     case 'getNetworkStatus':
       console.log('[Job Hunter] Getting network status...');
@@ -356,6 +362,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Job Hunter] Stop network expansion requested...');
       hunter.networkExpander.stopExpanding();
       sendResponse({ success: true });
+      return true;
+
+    case 'startJobApplication':
+      console.log('[Job Hunter] ✅ Job application requested...');
+      if (!hunter.jobApplicator) {
+        console.error('[Job Hunter] ❌ jobApplicator not initialized!');
+        sendResponse({ error: 'Job applicator not initialized' });
+        return false;
+      }
+      console.log('[Job Hunter] ✅ Job applicator exists, calling startApplying()...');
+      sendResponse({ success: true });
+      hunter.jobApplicator.startApplying().catch((error) => {
+        console.error('[Job Hunter] ❌ Job application error:', error);
+      });
+      return false;
+
+    case 'stopJobApplication':
+      console.log('[Job Hunter] Stop job application requested...');
+      hunter.jobApplicator.stopApplying();
+      sendResponse({ success: true });
+      return true;
+
+    case 'getJobApplicationStatus':
+      console.log('[Job Hunter] Getting job application status...');
+      const jobStatus = hunter.jobApplicator.getStatus();
+      sendResponse(jobStatus);
       return true;
 
     default:

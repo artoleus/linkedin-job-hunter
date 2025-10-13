@@ -17,6 +17,7 @@ class NetworkExpander {
   async init() {
     this.settings = await this.storage.getSettings();
     await this.loadDailyLimits();
+    this.currentTargetRole = null; // Track current role for analytics
   }
 
   async loadDailyLimits() {
@@ -69,6 +70,27 @@ class NetworkExpander {
 
   saveDailyLimits() {
     localStorage.setItem('networkExpanderLimits', JSON.stringify(this.dailyLimits));
+  }
+
+  // Save connection request to analytics
+  async saveConnectionAnalytics(fullName, profileUrl, message) {
+    try {
+      const requestData = {
+        targetRole: this.currentTargetRole || 'Unknown',
+        fullName: fullName,
+        profileUrl: profileUrl || window.location.href,
+        messageTemplate: message ? message.substring(0, 100) : null
+      };
+
+      await chrome.runtime.sendMessage({
+        action: 'saveConnectionRequest',
+        requestData
+      });
+
+      console.log('[Network Expander] Saved connection to analytics:', fullName);
+    } catch (error) {
+      console.error('[Network Expander] Error saving analytics:', error);
+    }
   }
 
   // Generate personalized connection message based on profile info
@@ -188,8 +210,8 @@ class NetworkExpander {
 
   // Check if we've reached daily limits
   hasReachedDailyLimit() {
-    const maxInvites = this.settings.maxDailyInvites || 15; // Very conservative default
-    const maxProfileViews = this.settings.maxDailyProfileViews || 30;
+    const maxInvites = this.settings.maxDailyInvites || 30; // Conservative default
+    const maxProfileViews = this.settings.maxDailyProfileViews || 60;
 
     return this.dailyLimits.invitesSent >= maxInvites ||
            this.dailyLimits.profilesViewed >= maxProfileViews;
@@ -323,6 +345,9 @@ class NetworkExpander {
               this.dailyLimits.invitesSent++;
               this.saveDailyLimits();
 
+              // Save to analytics
+              await this.saveConnectionAnalytics(fullName, null, message);
+
               return true;
             }
           }
@@ -339,6 +364,9 @@ class NetworkExpander {
 
         this.dailyLimits.invitesSent++;
         this.saveDailyLimits();
+
+        // Save to analytics
+        await this.saveConnectionAnalytics(fullName, null, null);
 
         return true;
       }
@@ -648,14 +676,181 @@ class NetworkExpander {
       // Check if we're on a search results page
       if (window.location.href.includes('/search/results/people/')) {
         console.log('[Network Expander] Resuming pending expansion task...');
-        await this.startExpanding({
-          targetRole: task.targetRole,
-          maxConnections: task.maxConnections
-        });
+
+        // Extract pagination info
+        const connectionsAlreadySent = task.connectionsAlreadySent || 0;
+        const currentPage = task.currentPage || 1;
+
+        // Restore current target role for analytics tracking
+        this.currentTargetRole = task.targetRole;
+
+        // If this was an automated task, process the page then continue
+        if (task.automated) {
+          console.log('[Network Expander] 🤖 Automated mode detected, processing this role then continuing...');
+
+          // Store pending task back temporarily (processCurrentPageConnections may update it for pagination)
+          localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+
+          const totalSent = await this.processCurrentPageConnections(
+            task.maxConnections,
+            connectionsAlreadySent,
+            currentPage
+          );
+
+          // Check if page navigation happened (for pagination)
+          const stillPending = localStorage.getItem('networkExpansionPending');
+          if (stillPending) {
+            const updatedTask = JSON.parse(stillPending);
+            // If the task was updated with new page info, navigation will happen
+            // and we'll resume here again
+            if (updatedTask.currentPage !== currentPage) {
+              console.log(`[Network Expander] Navigating to page ${updatedTask.currentPage}...`);
+              return; // Let navigation happen, will resume on next page
+            }
+          }
+
+          // Clear the pending task (no more pagination)
+          localStorage.removeItem('networkExpansionPending');
+
+          // After processing all pages for this role, continue to next role if not at limit
+          if (!this.hasReachedDailyLimit()) {
+            console.log('[Network Expander] Continuing automated expansion to next role...');
+            await this.runAutomatedExpansion();
+          } else {
+            console.log('[Network Expander] ✅ Daily limit reached! Stopping automated expansion.');
+            this.isRunning = false;
+          }
+        } else {
+          // Single role expansion (legacy mode)
+          // Store pending task back temporarily
+          localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+
+          await this.startExpanding({
+            targetRole: task.targetRole,
+            maxConnections: task.maxConnections
+          });
+        }
       }
     } catch (error) {
       console.error('[Network Expander] Error checking pending expansion:', error);
       localStorage.removeItem('networkExpansionPending');
+    }
+  }
+
+  // Find the Next page button for pagination
+  findNextPageButton() {
+    // Try to find pagination "Next" button
+    // LinkedIn uses various selectors for the Next button
+    let nextBtn = document.querySelector('button[aria-label="Next"]');
+
+    if (!nextBtn) {
+      // Try finding by class and text content
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const ariaLabel = btn.getAttribute('aria-label') || '';
+        if (ariaLabel.toLowerCase().includes('next')) {
+          nextBtn = btn;
+          break;
+        }
+      }
+    }
+
+    if (!nextBtn) {
+      // Try finding pagination links with "next" or arrow
+      const links = document.querySelectorAll('a.artdeco-pagination__button--next, a[aria-label*="Next"]');
+      if (links.length > 0) {
+        nextBtn = links[0];
+      }
+    }
+
+    return nextBtn;
+  }
+
+  // Process connections on the current search page (with pagination)
+  async processCurrentPageConnections(maxConnections, connectionsAlreadySent = 0, currentPage = 1) {
+    this.isRunning = true;
+    const remaining = maxConnections - connectionsAlreadySent;
+    console.log(`[Network Expander] Processing page ${currentPage} (need ${remaining} more connections, ${connectionsAlreadySent} already sent)...`);
+
+    try {
+      // Wait for page to settle
+      await this.humanDelay(3000, 5000);
+
+      // Find all Connect buttons on the page
+      const connectButtons = this.findAllConnectButtons();
+      console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons on page ${currentPage}`);
+
+      if (connectButtons.length === 0) {
+        console.log(`[Network Expander] No Connect buttons found on page ${currentPage}, moving on...`);
+        return connectionsAlreadySent;
+      }
+
+      // Shuffle buttons to randomize selection order
+      const shuffledButtons = this.shuffleArray([...connectButtons]);
+      console.log('[Network Expander] Randomized button order for more natural behavior');
+
+      let connectedThisPage = 0;
+      for (const button of shuffledButtons) {
+        const totalConnected = connectionsAlreadySent + connectedThisPage;
+
+        if (totalConnected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
+          break;
+        }
+
+        // Random chance to skip (makes it less robotic)
+        if (Math.random() < 0.3) {
+          console.log('[Network Expander] Randomly skipping profile (more human-like)');
+          continue;
+        }
+
+        const success = await this.sendConnectionRequestByButton(button, true);
+        if (success) {
+          connectedThisPage++;
+          const totalConnected = connectionsAlreadySent + connectedThisPage;
+          console.log(`[Network Expander] ✅ ${totalConnected}/${maxConnections} connections sent (${connectedThisPage} on this page)`);
+        }
+
+        // Long delay between requests (very important!)
+        await this.humanDelay(10000, 30000); // 10-30 seconds between requests
+      }
+
+      const totalConnected = connectionsAlreadySent + connectedThisPage;
+      console.log(`[Network Expander] ✅ Page ${currentPage} complete. Sent ${connectedThisPage} on this page, ${totalConnected} total.`);
+
+      // Check if we need to go to the next page
+      if (totalConnected < maxConnections && !this.hasReachedDailyLimit() && this.isRunning) {
+        const nextBtn = this.findNextPageButton();
+
+        if (nextBtn && !nextBtn.disabled) {
+          console.log(`[Network Expander] 📄 Need ${maxConnections - totalConnected} more connections, going to next page...`);
+
+          // Store pagination state before navigating
+          const pending = localStorage.getItem('networkExpansionPending');
+          if (pending) {
+            const task = JSON.parse(pending);
+            // Update task with pagination info
+            task.connectionsAlreadySent = totalConnected;
+            task.currentPage = currentPage + 1;
+            task.timestamp = Date.now();
+            localStorage.setItem('networkExpansionPending', JSON.stringify(task));
+          }
+
+          // Navigate to next page
+          await this.humanDelay(2000, 4000); // Delay before clicking next
+          nextBtn.click();
+
+          // Return here - checkPendingExpansion will resume after page loads
+          return totalConnected;
+        } else {
+          console.log('[Network Expander] No more pages available or Next button disabled');
+        }
+      }
+
+      return totalConnected;
+
+    } catch (error) {
+      console.error('[Network Expander] Error processing page:', error);
+      return connectionsAlreadySent;
     }
   }
 
@@ -667,46 +862,43 @@ class NetworkExpander {
 
     console.log(`[Network Expander] 🎯 Target: ${maxDaily} connections total, ${connectionsPerRole} per role`);
 
-    try {
-      while (!this.hasReachedDailyLimit() && this.isRunning) {
-        const remaining = maxDaily - this.dailyLimits.invitesSent;
-        console.log(`[Network Expander] 📊 Progress: ${this.dailyLimits.invitesSent}/${maxDaily} connections sent`);
-
-        if (remaining <= 0) {
-          console.log('[Network Expander] ✅ Daily limit reached!');
-          break;
-        }
-
-        // Get next role in rotation
-        const targetRole = this.getNextTargetRole();
-        const connectionsThisRound = Math.min(connectionsPerRole, remaining);
-
-        console.log(`[Network Expander] 🔄 Searching for role: "${targetRole}" (${connectionsThisRound} connections)`);
-
-        // Navigate to search page for this role
-        await this.expandSingleRole(targetRole, connectionsThisRound);
-
-        // Check if we should continue
-        if (!this.isRunning) {
-          console.log('[Network Expander] ⏹️ Stopped by user');
-          break;
-        }
-
-        // Delay between role searches (appears more natural)
-        if (!this.hasReachedDailyLimit() && this.isRunning) {
-          console.log('[Network Expander] 💤 Pausing before next role search...');
-          await this.humanDelay(30000, 60000); // 30-60 seconds between roles
-        }
-      }
-
-      console.log(`[Network Expander] 🏁 Automated expansion complete! Sent ${this.dailyLimits.invitesSent} connections today`);
-
-    } catch (error) {
-      console.error('[Network Expander] Error in automated expansion:', error);
-    } finally {
+    // Check if we've reached the limit
+    if (this.hasReachedDailyLimit()) {
+      console.log('[Network Expander] ✅ Daily limit already reached!');
       this.isRunning = false;
       localStorage.removeItem('networkExpansionPending');
+      return;
     }
+
+    const remaining = maxDaily - this.dailyLimits.invitesSent;
+    console.log(`[Network Expander] 📊 Progress: ${this.dailyLimits.invitesSent}/${maxDaily} connections sent`);
+
+    // Get next role in rotation
+    const targetRole = this.getNextTargetRole();
+    const connectionsThisRound = Math.min(connectionsPerRole, remaining);
+
+    // Set current role for analytics tracking
+    this.currentTargetRole = targetRole;
+
+    console.log(`[Network Expander] 🔄 Searching for role: "${targetRole}" (${connectionsThisRound} connections)`);
+
+    // Store automated expansion state before navigating
+    localStorage.setItem('networkExpansionPending', JSON.stringify({
+      automated: true,
+      targetRole,
+      maxConnections: connectionsThisRound,
+      timestamp: Date.now()
+    }));
+
+    // Build search URL
+    let searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(targetRole)}`;
+    if (this.settings.targetHiringOnly) {
+      searchUrl += '&serviceCategories=%5B%22HIRING%22%5D';
+    }
+
+    // Navigate to search page (script will resume after page loads via checkPendingExpansion)
+    console.log('[Network Expander] Navigating to:', searchUrl);
+    window.location.href = searchUrl;
   }
 
   // Expand network for a single role
@@ -783,7 +975,7 @@ class NetworkExpander {
     return {
       isRunning: this.isRunning,
       dailyLimits: this.dailyLimits,
-      remainingInvites: Math.max(0, (this.settings.maxDailyInvites || 15) - this.dailyLimits.invitesSent)
+      remainingInvites: Math.max(0, (this.settings.maxDailyInvites || 30) - this.dailyLimits.invitesSent)
     };
   }
 }
