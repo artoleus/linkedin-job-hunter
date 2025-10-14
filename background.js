@@ -156,6 +156,11 @@ class BackgroundService {
           sendResponse({ analytics });
           break;
 
+        case 'resetAcceptedToPending':
+          await this.resetAcceptedToPending();
+          sendResponse({ success: true });
+          break;
+
         case 'saveJobApplication':
           await this.saveJobApplication(request.applicationData);
           sendResponse({ success: true });
@@ -327,6 +332,45 @@ class BackgroundService {
   async getConnectionAnalytics() {
     const result = await chrome.storage.local.get(['connectionAnalytics']);
     return result.connectionAnalytics || { requests: [], stats: {} };
+  }
+
+  async resetAcceptedToPending() {
+    console.log('[Background] Resetting all accepted connections to pending...');
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    let resetCount = 0;
+
+    // Reset all accepted requests to pending
+    analytics.requests.forEach(request => {
+      if (request.status === 'accepted') {
+        request.status = 'pending';
+        request.responseDate = null;
+        resetCount++;
+      }
+    });
+
+    // Recalculate stats
+    analytics.stats.totalPending = analytics.requests.filter(r => r.status === 'pending').length;
+    analytics.stats.totalAccepted = 0;
+    analytics.stats.totalDeclined = analytics.requests.filter(r => r.status === 'declined').length;
+    analytics.stats.acceptanceRate = 0;
+
+    // Recalculate average response time (only for declined ones now)
+    const respondedRequests = analytics.requests.filter(r => r.responseDate);
+    if (respondedRequests.length > 0) {
+      const totalResponseTime = respondedRequests.reduce((sum, r) => {
+        const sent = new Date(r.sentDate);
+        const responded = new Date(r.responseDate);
+        return sum + (responded - sent);
+      }, 0);
+      analytics.stats.avgResponseTime = totalResponseTime / respondedRequests.length;
+    } else {
+      analytics.stats.avgResponseTime = 0;
+    }
+
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    console.log('[Background] Reset complete:', resetCount, 'connections reset to pending');
   }
 
   // Job Application Methods

@@ -54,6 +54,30 @@ class AnalyticsDashboard {
       this.render();
     });
 
+    // Reset accepted button
+    document.getElementById('resetAcceptedBtn').addEventListener('click', async () => {
+      if (!confirm('This will reset all accepted connections back to pending status. Are you sure?')) {
+        return;
+      }
+
+      const btn = document.getElementById('resetAcceptedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Resetting...';
+
+      try {
+        await chrome.runtime.sendMessage({ action: 'resetAcceptedToPending' });
+        alert('All accepted connections have been reset to pending. Click "Refresh Data" to see the changes.');
+        await this.loadData();
+        this.render();
+      } catch (error) {
+        console.error('[Analytics] Error resetting accepted connections:', error);
+        alert('Error: Could not reset connections. ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Reset Accepted to Pending';
+      }
+    });
+
     // Check connections button
     document.getElementById('checkConnectionsBtn').addEventListener('click', async () => {
       const btn = document.getElementById('checkConnectionsBtn');
