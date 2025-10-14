@@ -61,24 +61,40 @@ class AnalyticsDashboard {
       btn.textContent = 'Checking...';
 
       try {
-        // Query the active tab
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        // Look for any LinkedIn tab (not just active)
+        const tabs = await chrome.tabs.query({ url: 'https://*.linkedin.com/*' });
 
-        if (!tab.url.includes('linkedin.com')) {
-          alert('Please open a LinkedIn tab first, then try again.');
+        let linkedInTab = tabs.length > 0 ? tabs[0] : null;
+
+        if (!linkedInTab) {
+          // No LinkedIn tab found, create one
+          console.log('[Analytics] No LinkedIn tab found, creating new tab...');
+          linkedInTab = await chrome.tabs.create({
+            url: 'https://www.linkedin.com/mynetwork/invitation-manager/sent/',
+            active: true
+          });
+
+          // Wait for tab to load
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          alert('LinkedIn tab opened. Please wait for the page to load, then click "Check Accepted Connections" again.');
           btn.disabled = false;
           btn.textContent = 'Check Accepted Connections';
           return;
         }
 
+        // LinkedIn tab exists, switch to it and send message
+        console.log('[Analytics] Found LinkedIn tab:', linkedInTab.id);
+        await chrome.tabs.update(linkedInTab.id, { active: true });
+
         // Send message to content script
-        await chrome.tabs.sendMessage(tab.id, { action: 'checkAcceptedConnections' });
+        await chrome.tabs.sendMessage(linkedInTab.id, { action: 'checkAcceptedConnections' });
 
         alert('Navigating to check connections... This will check your sent invitations and update accepted connections. Please wait a moment, then refresh this page.');
 
       } catch (error) {
         console.error('[Analytics] Error checking connections:', error);
-        alert('Error: Could not check connections. Make sure you have a LinkedIn tab open.');
+        alert('Error: Could not check connections. ' + error.message);
       } finally {
         btn.disabled = false;
         btn.textContent = 'Check Accepted Connections';
