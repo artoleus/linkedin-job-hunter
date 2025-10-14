@@ -660,13 +660,18 @@ class NetworkExpander {
   // Check if there's a pending expansion task (called on page load)
   async checkPendingExpansion() {
     const pending = localStorage.getItem('networkExpansionPending');
+    console.log('[Network Expander] checkPendingExpansion called. Pending task:', pending ? 'found' : 'none');
+
     if (!pending) return;
 
     try {
       const task = JSON.parse(pending);
+      console.log('[Network Expander] Pending task details:', task);
 
       // Check if task is less than 2 minutes old (avoid stale tasks)
       const age = Date.now() - task.timestamp;
+      console.log('[Network Expander] Task age:', Math.round(age / 1000), 'seconds');
+
       if (age > 120000) {
         console.log('[Network Expander] Pending task too old, ignoring');
         localStorage.removeItem('networkExpansionPending');
@@ -674,7 +679,11 @@ class NetworkExpander {
       }
 
       // Check if we're on a search results page
-      if (window.location.href.includes('/search/results/people/')) {
+      const currentUrl = window.location.href;
+      console.log('[Network Expander] Current URL:', currentUrl);
+      console.log('[Network Expander] Is people search page?', currentUrl.includes('/search/results/people/'));
+
+      if (currentUrl.includes('/search/results/people/')) {
         console.log('[Network Expander] Resuming pending expansion task...');
 
         // Extract pagination info
