@@ -40,26 +40,46 @@ class ConnectionMonitor {
       await new Promise(resolve => setTimeout(resolve, 3000));
 
       // Find all invitation cards on the page - try multiple selectors
-      let invitationCards = document.querySelectorAll('[data-chameleon-result-urn]');
+      let invitationCards = [];
 
-      if (invitationCards.length === 0) {
-        invitationCards = document.querySelectorAll('.invitation-card');
+      const selectors = [
+        'li[data-chameleon-result-urn]',
+        'li.invitation-card',
+        'li.mn-invitation-card',
+        'li[class*="reusable-search__result"]',
+        'ul.reusable-search__entity-result-list li',
+        '[data-view-name="sent-invitations-list"] li',
+        '.artdeco-list li'
+      ];
+
+      console.log('[Connection Monitor] Trying', selectors.length, 'different selectors...');
+
+      for (const selector of selectors) {
+        invitationCards = document.querySelectorAll(selector);
+        console.log('[Connection Monitor] Selector "' + selector + '" found', invitationCards.length, 'cards');
+        if (invitationCards.length > 0) {
+          console.log('[Connection Monitor] ✅ Using selector:', selector);
+          break;
+        }
       }
 
       if (invitationCards.length === 0) {
-        invitationCards = document.querySelectorAll('.mn-invitation-card');
-      }
+        console.warn('[Connection Monitor] ⚠️ No invitation cards found with any selector!');
+        console.warn('[Connection Monitor] Available list elements:', document.querySelectorAll('li').length);
+        console.warn('[Connection Monitor] Available ul elements:', document.querySelectorAll('ul').length);
 
-      if (invitationCards.length === 0) {
-        // Try finding by list items in the sent invitations container
-        invitationCards = document.querySelectorAll('li.invitation-card, li[class*="reusable-search__result"]');
-      }
+        // Try to find ANY list items that might contain names
+        const allLi = document.querySelectorAll('li');
+        console.warn('[Connection Monitor] Checking all', allLi.length, 'li elements for names...');
 
-      console.log('[Connection Monitor] Found', invitationCards.length, 'invitation cards');
+        // Filter to only list items that contain what looks like a name
+        invitationCards = Array.from(allLi).filter(li => {
+          const text = li.textContent;
+          return text.includes('Sent today') || text.includes('Withdraw') ||
+                 (text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length < 500);
+        });
 
-      if (invitationCards.length === 0) {
-        console.warn('[Connection Monitor] No invitation cards found on page. Cannot check status.');
-        console.warn('[Connection Monitor] Page HTML:', document.body.innerHTML.substring(0, 500));
+        console.warn('[Connection Monitor] Found', invitationCards.length, 'li elements that might be invitation cards');
       }
 
       // Check each pending request against the sent invitations
@@ -116,13 +136,50 @@ class ConnectionMonitor {
       // Wait for page to load
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      // Find all connection cards
-      const connectionCards = document.querySelectorAll('li[class*="mn-connection-card"], li.reusable-search__result-container');
-      console.log('[Connection Monitor] Found', connectionCards.length, 'connection cards');
+      // Find all connection cards - try multiple selectors
+      let connectionCards = [];
+
+      const selectors = [
+        'li[class*="mn-connection-card"]',
+        'li.reusable-search__result-container',
+        'li[data-chameleon-result-urn]',
+        'ul.reusable-search__entity-result-list li',
+        '[data-view-name="connections-list"] li',
+        '.artdeco-list li'
+      ];
+
+      console.log('[Connection Monitor] Trying', selectors.length, 'different selectors for connections...');
+
+      for (const selector of selectors) {
+        connectionCards = document.querySelectorAll(selector);
+        console.log('[Connection Monitor] Selector "' + selector + '" found', connectionCards.length, 'cards');
+        if (connectionCards.length > 0) {
+          console.log('[Connection Monitor] ✅ Using selector:', selector);
+          break;
+        }
+      }
+
+      if (connectionCards.length === 0) {
+        console.warn('[Connection Monitor] ⚠️ No connection cards found with any selector!');
+        console.warn('[Connection Monitor] Available list elements:', document.querySelectorAll('li').length);
+
+        // Try to find ANY list items on the page
+        const allLi = document.querySelectorAll('li');
+        console.warn('[Connection Monitor] Checking all', allLi.length, 'li elements...');
+
+        // Filter to items that look like connection cards (have names and reasonable length)
+        connectionCards = Array.from(allLi).filter(li => {
+          const text = li.textContent;
+          return text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length > 20 && text.length < 500;
+        });
+
+        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements that might be connection cards');
+      }
 
       let acceptedCount = 0;
 
       for (const request of pendingRequests) {
+        console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in connections...');
         // Check if this person is in the connections
         let found = false;
 
@@ -145,11 +202,19 @@ class ConnectionMonitor {
         }
 
         if (!found) {
-          console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in connections (still pending or declined)');
+          console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in visible connections');
         }
       }
 
       console.log('[Connection Monitor] ✅ Connections page check complete:', acceptedCount, 'accepted');
+
+      if (acceptedCount === 0 && pendingRequests.length > 0) {
+        console.warn('[Connection Monitor] ⚠️ No acceptances found. This could mean:');
+        console.warn('  1. No connections have been accepted yet');
+        console.warn('  2. Accepted connections are not on the first page');
+        console.warn('  3. Card selectors need adjustment');
+        console.warn('[Connection Monitor] Sample card text:', connectionCards.length > 0 ? connectionCards[0].textContent.substring(0, 200) : 'No cards found');
+      }
 
       // Clear progress
       localStorage.removeItem('connectionCheckProgress');
