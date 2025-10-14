@@ -143,16 +143,23 @@ class ConnectionMonitor {
       window.scrollTo(0, 1000);
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Find all connection cards - try multiple selectors
+      // Find all connection cards - based on actual LinkedIn structure
       let connectionCards = [];
 
+      // LinkedIn's connections page uses these patterns:
       const selectors = [
+        // Try the most specific first
+        'li.mn-connection-card',
         'li[class*="mn-connection-card"]',
+        // Grid layout items
+        'li.artdeco-list__item',
+        'ul.mn-connections__connections-list li',
+        // Generic patterns
         'li.reusable-search__result-container',
         'li[data-chameleon-result-urn]',
         'ul.reusable-search__entity-result-list li',
         '[data-view-name="connections-list"] li',
-        '.artdeco-list li'
+        '.scaffold-finite-scroll__content li'
       ];
 
       console.log('[Connection Monitor] Trying', selectors.length, 'different selectors for connections...');
@@ -166,21 +173,31 @@ class ConnectionMonitor {
         }
       }
 
+      // If still nothing, try to find list items with "Message" buttons (connections have message buttons)
       if (connectionCards.length === 0) {
         console.warn('[Connection Monitor] ⚠️ No connection cards found with any selector!');
-        console.warn('[Connection Monitor] Available list elements:', document.querySelectorAll('li').length);
+        console.warn('[Connection Monitor] Trying to find elements with Message buttons...');
 
-        // Try to find ANY list items on the page
         const allLi = document.querySelectorAll('li');
-        console.warn('[Connection Monitor] Checking all', allLi.length, 'li elements...');
-
-        // Filter to items that look like connection cards (have names and reasonable length)
         connectionCards = Array.from(allLi).filter(li => {
-          const text = li.textContent;
-          return text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length > 20 && text.length < 500;
+          return li.textContent.includes('Message') && li.textContent.match(/[A-Z][a-z]+ [A-Z][a-z]+/);
         });
 
-        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements that might be connection cards');
+        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements with Message buttons');
+      }
+
+      // Last resort - find elements that look like connection entries
+      if (connectionCards.length === 0) {
+        console.warn('[Connection Monitor] Trying to find any list items that look like connections...');
+
+        const allLi = document.querySelectorAll('li');
+        connectionCards = Array.from(allLi).filter(li => {
+          const text = li.textContent;
+          // Must have a name pattern and be reasonable length
+          return text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length > 50 && text.length < 800;
+        });
+
+        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements that might be connections');
       }
 
       let acceptedCount = 0;
