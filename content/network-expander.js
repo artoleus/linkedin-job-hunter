@@ -887,6 +887,8 @@ class NetworkExpander {
       automated: true,
       targetRole,
       maxConnections: connectionsThisRound,
+      connectionsAlreadySent: 0,
+      currentPage: 1,
       timestamp: Date.now()
     }));
 
