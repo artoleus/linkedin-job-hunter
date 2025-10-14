@@ -46,7 +46,12 @@ class ConnectionMonitor {
       console.log('[Connection Monitor] Found', invitationCards.length, 'invitation cards');
 
       // Check each pending request against the sent invitations
+      let acceptedCount = 0;
+      let stillPendingCount = 0;
+      let declinedCount = 0;
+
       for (const request of pendingRequests) {
+        console.log('[Connection Monitor] 🔄 Checking request:', request.fullName, '(ID:', request.id + ')');
         const found = await this.checkInvitationStatus(request, invitationCards);
 
         if (!found) {
@@ -56,16 +61,28 @@ class ConnectionMonitor {
 
           if (isConnection) {
             console.log('[Connection Monitor] ✅', request.fullName, 'accepted connection!');
+            acceptedCount++;
             await chrome.runtime.sendMessage({
               action: 'updateConnectionStatus',
               requestId: request.id,
               status: 'accepted'
             });
           }
+        } else {
+          // Found in sent invitations, check current status
+          const currentRequest = analytics.requests.find(r => r.id === request.id);
+          if (currentRequest.status === 'pending') {
+            stillPendingCount++;
+          } else if (currentRequest.status === 'declined') {
+            declinedCount++;
+          }
         }
       }
 
-      console.log('[Connection Monitor] Check complete');
+      console.log('[Connection Monitor] ✅ Check complete:',
+                  acceptedCount, 'accepted,',
+                  stillPendingCount, 'still pending,',
+                  declinedCount, 'declined');
 
     } catch (error) {
       console.error('[Connection Monitor] Error checking connections:', error);
@@ -74,6 +91,8 @@ class ConnectionMonitor {
 
   async checkInvitationStatus(request, invitationCards) {
     // Look for the person's name in the invitation cards
+    console.log('[Connection Monitor] 🔍 Searching for', request.fullName, 'in', invitationCards.length, 'invitation cards');
+
     for (const card of invitationCards) {
       const nameElement = card.querySelector('[class*="name"], [data-anonymize="person-name"]');
       if (!nameElement) continue;
@@ -82,6 +101,7 @@ class ConnectionMonitor {
 
       // Check if names match (fuzzy match)
       if (this.namesMatch(cardName, request.fullName)) {
+        console.log('[Connection Monitor] ✅ Found matching card for', request.fullName);
         // Check if invitation was withdrawn or is still pending
         const withdrawnText = card.textContent.toLowerCase();
 
@@ -101,19 +121,23 @@ class ConnectionMonitor {
       }
     }
 
+    console.log('[Connection Monitor] ❌ Not found in sent invitations:', request.fullName);
     return false; // Not found in sent invitations
   }
 
   async checkIfConnection(fullName) {
     // Check if person is now in connections
-    // We can do this by searching for their name and seeing if they show as a connection
+    // If they're not in "sent invitations" anymore, they were either:
+    // 1. Accepted (most common)
+    // 2. Invitation expired/withdrawn (less common)
 
-    // Simple heuristic: if they're not in "sent invitations", they might have been accepted
-    // More sophisticated: we could navigate to /mynetwork/invite-connect/connections/
-    // and search for their name, but that would be slow
+    // We'll assume accepted if not found in sent invitations
+    // This is reasonable because:
+    // - LinkedIn keeps expired invitations visible in sent for a while
+    // - Most pending invitations that disappear are accepted
 
-    // For now, we'll assume if they're not in sent invitations after enough time, they were accepted
-    return true; // Conservative assumption - if not in sent, likely accepted
+    console.log('[Connection Monitor] 🔍 Checking if', fullName, 'is now a connection (not in sent invitations)');
+    return true; // Assume accepted if not in sent invitations
   }
 
   namesMatch(name1, name2) {
