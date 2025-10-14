@@ -6,6 +6,7 @@ class LinkedInJobHunter {
     this.crawler = new window.NetworkCrawler(this.storage);
     this.detector = new window.JobDetector(this.storage);
     this.networkExpander = new window.NetworkExpander(this.storage);
+    this.connectionMonitor = new window.ConnectionMonitor(this.storage);
     this.jobApplicator = new window.JobApplicator(this.storage);
 
     this.isInitialized = false;
@@ -389,6 +390,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const jobStatus = hunter.jobApplicator.getStatus();
       sendResponse(jobStatus);
       return true;
+
+    case 'checkAcceptedConnections':
+      console.log('[Job Hunter] Checking for accepted connections...');
+      if (!hunter.connectionMonitor) {
+        console.error('[Job Hunter] connectionMonitor not initialized!');
+        sendResponse({ error: 'Connection monitor not initialized' });
+        return false;
+      }
+      sendResponse({ success: true, message: 'Navigating to check connections...' });
+      hunter.connectionMonitor.checkAllPendingConnections().catch((error) => {
+        console.error('[Job Hunter] Error checking connections:', error);
+      });
+      return false;
 
     default:
       console.log('[Job Hunter] Unknown action:', request.action);

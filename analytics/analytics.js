@@ -54,6 +54,37 @@ class AnalyticsDashboard {
       this.render();
     });
 
+    // Check connections button
+    document.getElementById('checkConnectionsBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('checkConnectionsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+
+      try {
+        // Query the active tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+        if (!tab.url.includes('linkedin.com')) {
+          alert('Please open a LinkedIn tab first, then try again.');
+          btn.disabled = false;
+          btn.textContent = 'Check Accepted Connections';
+          return;
+        }
+
+        // Send message to content script
+        await chrome.tabs.sendMessage(tab.id, { action: 'checkAcceptedConnections' });
+
+        alert('Navigating to check connections... This will check your sent invitations and update accepted connections. Please wait a moment, then refresh this page.');
+
+      } catch (error) {
+        console.error('[Analytics] Error checking connections:', error);
+        alert('Error: Could not check connections. Make sure you have a LinkedIn tab open.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Check Accepted Connections';
+      }
+    });
+
     // Add test data button (for demonstration)
     document.getElementById('addTestDataBtn').addEventListener('click', async () => {
       if (confirm('Add test data to analytics? (This will add sample connection requests for demonstration)')) {
