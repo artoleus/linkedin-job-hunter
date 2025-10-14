@@ -133,8 +133,15 @@ class ConnectionMonitor {
 
       console.log('[Connection Monitor] Checking', pendingRequests.length, 'pending requests on connections page...');
 
-      // Wait for page to load
+      // Wait for page to load and scroll to trigger lazy loading
       await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Scroll down to load more connections
+      console.log('[Connection Monitor] Scrolling to load connections...');
+      window.scrollTo(0, 500);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      window.scrollTo(0, 1000);
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Find all connection cards - try multiple selectors
       let connectionCards = [];
@@ -178,17 +185,44 @@ class ConnectionMonitor {
 
       let acceptedCount = 0;
 
-      for (const request of pendingRequests) {
-        console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in connections...');
-        // Check if this person is in the connections
-        let found = false;
+      // If we have connection cards, search within them
+      if (connectionCards.length > 0) {
+        for (const request of pendingRequests) {
+          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in', connectionCards.length, 'connection cards...');
+          let found = false;
 
-        for (const card of connectionCards) {
-          const cardText = card.textContent;
+          for (const card of connectionCards) {
+            const cardText = card.textContent;
 
-          if (this.namesMatch(cardText, request.fullName)) {
-            console.log('[Connection Monitor] ✅', request.fullName, 'found in connections - ACCEPTED!');
-            found = true;
+            if (this.namesMatch(cardText, request.fullName)) {
+              console.log('[Connection Monitor] ✅', request.fullName, 'found in connections - ACCEPTED!');
+              found = true;
+              acceptedCount++;
+
+              await chrome.runtime.sendMessage({
+                action: 'updateConnectionStatus',
+                requestId: request.id,
+                status: 'accepted'
+              });
+
+              break;
+            }
+          }
+
+          if (!found) {
+            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in visible connection cards');
+          }
+        }
+      } else {
+        // Fallback: search the entire page body for names
+        console.warn('[Connection Monitor] No cards found, searching entire page text...');
+        const pageText = document.body.textContent;
+
+        for (const request of pendingRequests) {
+          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in page text...');
+
+          if (this.namesMatch(pageText, request.fullName)) {
+            console.log('[Connection Monitor] ✅', request.fullName, 'found on page - LIKELY ACCEPTED!');
             acceptedCount++;
 
             await chrome.runtime.sendMessage({
@@ -196,13 +230,9 @@ class ConnectionMonitor {
               requestId: request.id,
               status: 'accepted'
             });
-
-            break;
+          } else {
+            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found on page');
           }
-        }
-
-        if (!found) {
-          console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in visible connections');
         }
       }
 
