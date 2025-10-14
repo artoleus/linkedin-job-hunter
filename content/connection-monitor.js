@@ -231,26 +231,37 @@ class ConnectionMonitor {
           }
         }
       } else {
-        // Fallback: search the entire page body for names
-        console.warn('[Connection Monitor] No cards found, searching entire page text...');
-        const pageText = document.body.textContent;
+        // Fallback: search the main content area for names (avoid navigation, ads, etc.)
+        console.warn('[Connection Monitor] No cards found, searching main content area...');
+
+        // Try to find the main connections content area
+        const mainContent = document.querySelector('main') ||
+                           document.querySelector('.scaffold-finite-scroll__content') ||
+                           document.querySelector('[data-view-name="connections-list"]') ||
+                           document.body;
+
+        const contentText = mainContent.textContent;
+        console.warn('[Connection Monitor] Searching in main content (', contentText.length, 'characters)');
 
         for (const request of pendingRequests) {
-          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in page text...');
+          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in main content...');
 
-          if (this.namesMatch(pageText, request.fullName)) {
-            console.log('[Connection Monitor] ✅', request.fullName, 'found on page - LIKELY ACCEPTED!');
-            acceptedCount++;
+          // Be very strict - require exact name match in the content
+          const cleanName = request.fullName.toLowerCase().trim();
+          const cleanContent = contentText.toLowerCase();
 
-            await chrome.runtime.sendMessage({
-              action: 'updateConnectionStatus',
-              requestId: request.id,
-              status: 'accepted'
-            });
+          // Check for exact match only (not substring)
+          if (cleanContent.includes(cleanName)) {
+            console.log('[Connection Monitor] ⚠️', request.fullName, 'found in main content');
+            console.warn('[Connection Monitor] Cannot determine if this is a connection without card structure');
+            console.warn('[Connection Monitor] Skipping to avoid false positive');
           } else {
-            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found on page');
+            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in main content');
           }
         }
+
+        console.warn('[Connection Monitor] ⚠️ Could not reliably detect connections without proper card selectors');
+        console.warn('[Connection Monitor] Please report this issue - LinkedIn page structure may have changed');
       }
 
       console.log('[Connection Monitor] ✅ Connections page check complete:', acceptedCount, 'accepted');
