@@ -307,10 +307,10 @@ class BackgroundService {
       analytics.stats.totalDeclined = (analytics.stats.totalDeclined || 0) + 1;
     }
 
-    // Recalculate acceptance rate
-    const total = analytics.stats.totalAccepted + analytics.stats.totalDeclined;
-    if (total > 0) {
-      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / total;
+    // Recalculate acceptance rate (accepted / total sent)
+    const totalSent = analytics.stats.totalSent || 0;
+    if (totalSent > 0) {
+      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / totalSent;
     }
 
     // Calculate average response time
