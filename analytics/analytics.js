@@ -54,6 +54,26 @@ class AnalyticsDashboard {
       this.render();
     });
 
+    // Recalculate stats button
+    document.getElementById('recalculateStatsBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('recalculateStatsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Recalculating...';
+
+      try {
+        await chrome.runtime.sendMessage({ action: 'recalculateStats' });
+        await this.loadData();
+        this.render();
+        alert('Statistics recalculated successfully!');
+      } catch (error) {
+        console.error('[Analytics] Error recalculating stats:', error);
+        alert('Error: Could not recalculate stats. ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Recalculate Stats';
+      }
+    });
+
     // Reset accepted button
     document.getElementById('resetAcceptedBtn').addEventListener('click', async () => {
       if (!confirm('This will reset all accepted connections back to pending status. Are you sure?')) {

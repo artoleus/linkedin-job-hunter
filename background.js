@@ -161,6 +161,11 @@ class BackgroundService {
           sendResponse({ success: true });
           break;
 
+        case 'recalculateStats':
+          await this.recalculateConnectionStats();
+          sendResponse({ success: true });
+          break;
+
         case 'saveJobApplication':
           await this.saveJobApplication(request.applicationData);
           sendResponse({ success: true });
@@ -351,12 +356,30 @@ class BackgroundService {
     });
 
     // Recalculate stats
-    analytics.stats.totalPending = analytics.requests.filter(r => r.status === 'pending').length;
-    analytics.stats.totalAccepted = 0;
-    analytics.stats.totalDeclined = analytics.requests.filter(r => r.status === 'declined').length;
-    analytics.stats.acceptanceRate = 0;
+    await this.recalculateConnectionStats();
 
-    // Recalculate average response time (only for declined ones now)
+    console.log('[Background] Reset complete:', resetCount, 'connections reset to pending');
+  }
+
+  async recalculateConnectionStats() {
+    console.log('[Background] Recalculating connection statistics...');
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    // Recalculate all stats from scratch
+    analytics.stats.totalSent = analytics.requests.length;
+    analytics.stats.totalPending = analytics.requests.filter(r => r.status === 'pending').length;
+    analytics.stats.totalAccepted = analytics.requests.filter(r => r.status === 'accepted').length;
+    analytics.stats.totalDeclined = analytics.requests.filter(r => r.status === 'declined').length;
+
+    // Recalculate acceptance rate (accepted / total sent)
+    if (analytics.stats.totalSent > 0) {
+      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / analytics.stats.totalSent;
+    } else {
+      analytics.stats.acceptanceRate = 0;
+    }
+
+    // Recalculate average response time
     const respondedRequests = analytics.requests.filter(r => r.responseDate);
     if (respondedRequests.length > 0) {
       const totalResponseTime = respondedRequests.reduce((sum, r) => {
@@ -370,7 +393,8 @@ class BackgroundService {
     }
 
     await chrome.storage.local.set({ connectionAnalytics: analytics });
-    console.log('[Background] Reset complete:', resetCount, 'connections reset to pending');
+    console.log('[Background] Stats recalculated. Acceptance rate:',
+                Math.round(analytics.stats.acceptanceRate * 100) + '%');
   }
 
   // Job Application Methods
