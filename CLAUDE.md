@@ -49,9 +49,11 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **popup/popup.js**: UI controller for extension popup. Communicates with both background script (for storage) and content script (for real-time status). Updates UI every 5 seconds. Includes controls for job application automation and network expansion.
 
-- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates, response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, and CSV export.
+- **content/connection-monitor.js**: Monitors connection request status changes by checking LinkedIn's sent invitations page and connections page. Detects accepted, pending, and declined connections. Uses fuzzy name matching to handle variations. Navigates between pages to verify connection status accurately. Falls back to page content search when card selectors fail.
 
-- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics and supports CSV export.
+- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives.
+
+- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics including salary ranges extracted from job details. Supports CSV export and individual application deletion.
 
 ## Development
 
@@ -103,6 +105,7 @@ Opportunities stored with fields: `id`, `type`, `source`, `title`, `company`, `a
 - `storage`: Chrome Storage API for settings and opportunities
 - `activeTab`: Access to active LinkedIn tab
 - `scripting`: Dynamic script injection
+- `tabs`: Query and manage browser tabs for connection monitoring
 - `host_permissions`: `https://*.linkedin.com/*` only
 
 ## Important Constraints
@@ -293,13 +296,18 @@ Add to `job-detector.js`:
 
 **Analytics & Tracking:**
 ✅ Connection analytics dashboard with charts
-✅ Acceptance rate tracking by role and time
+✅ Acceptance rate tracking (accepted/total sent ratio)
+✅ Connection status monitoring (accepted/pending/declined)
+✅ Automated connection status verification
 ✅ Response time analysis
 ✅ Time-of-day and day-of-week patterns
 ✅ Job applications tracker with status filtering
+✅ Salary range extraction and display
+✅ Application deletion functionality
 ✅ Draft applications management
 ✅ CSV export for both analytics and applications
 ✅ Interactive filtering and search
+✅ Reset functionality for clearing false positives
 
 ---
 
