@@ -66,9 +66,9 @@ class BackgroundService {
       maxSalary: null,
       workTypes: ['remote', 'hybrid'],  // remote, hybrid, onsite
       homeLocation: {
-        address: 'Sittingbourne, Kent, UK',
-        lat: 51.3411,
-        lng: 0.7337
+        address: '',  // User's home location
+        lat: null,
+        lng: null
       },
       maxHybridDistance: 75,  // miles
       autoFillName: '',
@@ -103,9 +103,9 @@ class BackgroundService {
           maxSalary: null,
           workTypes: ['remote', 'hybrid'],
           homeLocation: {
-            address: 'Sittingbourne, Kent, UK',
-            lat: 51.3411,
-            lng: 0.7337
+            address: '',
+            lat: null,
+            lng: null
           },
           maxHybridDistance: 75
         }

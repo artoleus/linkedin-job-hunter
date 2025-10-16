@@ -152,12 +152,52 @@ A Chrome browser extension that automatically discovers job opportunities throug
 - **Organic Browsing**: Mimics manual navigation patterns
 - **Conservative Defaults**: Safe limits out of the box
 
-## Data Privacy
+## Data Privacy & Security
 
-- **Local Storage Only**: All opportunities stored on your device
-- **No Data Transmission**: Nothing sent to external servers
-- **User Control**: Delete data anytime through settings
-- **No Personal Info**: Only public profile data accessed
+### Data Storage
+- **Local Storage Only**: All opportunities stored on your device using Chrome's local storage
+- **No External Transmission**: Nothing sent to external servers or third parties
+- **User Control**: Delete data anytime through Chrome extension settings
+- **No Cloud Sync**: Data stays on your local machine only
+
+### Personal Information
+- **User Configured**: All personal data (name, email, phone, location) is entered by you in settings
+- **No Collection**: Extension does not collect any personal information
+- **No Analytics**: No tracking or analytics sent to developers
+- **Public Data Only**: Extension only accesses publicly visible LinkedIn data
+
+### Security Best Practices
+- **Secure Storage**: Uses Chrome's encrypted storage API
+- **No Credentials Stored**: Uses your existing LinkedIn session (no passwords)
+- **Open Source**: All code is visible for security auditing
+- **No API Keys**: No external API keys or tokens required
+
+### What Gets Stored Locally
+```javascript
+{
+  settings: {
+    // Your configuration (keywords, limits, etc.)
+    autoFillName: "Your Name",        // Optional, you enter this
+    autoFillEmail: "you@example.com", // Optional, you enter this
+    autoFillPhone: "+44 xxx",         // Optional, you enter this
+    homeLocation: {                   // Optional, you enter this
+      address: "Your City, UK",
+      lat: null,
+      lng: null
+    }
+  },
+  opportunities: [/* Jobs found */],
+  connectionAnalytics: {/* Your networking stats */},
+  jobApplications: {/* Your application history */}
+}
+```
+
+### Removing Your Data
+To completely remove all data:
+1. Open Chrome Extensions (`chrome://extensions/`)
+2. Find LinkedIn Job Hunter
+3. Click "Remove"
+4. All locally stored data will be deleted
 
 ## Troubleshooting
 

@@ -10,9 +10,9 @@ class JobApplicator {
     };
     this.isRunning = false;
     this.homeLocation = {
-      address: 'Sittingbourne, Kent, UK',
-      lat: 51.3411,
-      lng: 0.7337
+      address: '',  // User's home location - set in settings
+      lat: null,
+      lng: null
     };
 
     this.init();
@@ -161,7 +161,6 @@ class JobApplicator {
       'oxford': { lat: 51.7520, lng: -1.2577 },
       'brighton': { lat: 50.8225, lng: -0.1372 },
       'kent': { lat: 51.2787, lng: 0.5217 },
-      'sittingbourne': { lat: 51.3411, lng: 0.7337 },
       'canterbury': { lat: 51.2802, lng: 1.0789 },
       'maidstone': { lat: 51.2704, lng: 0.5227 },
       'ashford': { lat: 51.1465, lng: 0.8750 },
@@ -247,7 +246,7 @@ class JobApplicator {
             jobCoords.lng
           );
 
-          console.log('[Job Applicator] Distance from Sittingbourne:', Math.round(distance), 'miles');
+          console.log('[Job Applicator] Distance from home location:', Math.round(distance), 'miles');
 
           if (distance > maxDistance) {
             return {
