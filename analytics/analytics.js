@@ -54,6 +54,97 @@ class AnalyticsDashboard {
       this.render();
     });
 
+    // Recalculate stats button
+    document.getElementById('recalculateStatsBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('recalculateStatsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Recalculating...';
+
+      try {
+        await chrome.runtime.sendMessage({ action: 'recalculateStats' });
+        await this.loadData();
+        this.render();
+        alert('Statistics recalculated successfully!');
+      } catch (error) {
+        console.error('[Analytics] Error recalculating stats:', error);
+        alert('Error: Could not recalculate stats. ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Recalculate Stats';
+      }
+    });
+
+    // Reset accepted button
+    document.getElementById('resetAcceptedBtn').addEventListener('click', async () => {
+      if (!confirm('This will reset all accepted connections back to pending status. Are you sure?')) {
+        return;
+      }
+
+      const btn = document.getElementById('resetAcceptedBtn');
+      btn.disabled = true;
+      btn.textContent = 'Resetting...';
+
+      try {
+        await chrome.runtime.sendMessage({ action: 'resetAcceptedToPending' });
+        alert('All accepted connections have been reset to pending. Click "Refresh Data" to see the changes.');
+        await this.loadData();
+        this.render();
+      } catch (error) {
+        console.error('[Analytics] Error resetting accepted connections:', error);
+        alert('Error: Could not reset connections. ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Reset Accepted to Pending';
+      }
+    });
+
+    // Check connections button
+    document.getElementById('checkConnectionsBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('checkConnectionsBtn');
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+
+      try {
+        // Look for any LinkedIn tab (not just active)
+        const tabs = await chrome.tabs.query({ url: 'https://*.linkedin.com/*' });
+
+        let linkedInTab = tabs.length > 0 ? tabs[0] : null;
+
+        if (!linkedInTab) {
+          // No LinkedIn tab found, create one
+          console.log('[Analytics] No LinkedIn tab found, creating new tab...');
+          linkedInTab = await chrome.tabs.create({
+            url: 'https://www.linkedin.com/mynetwork/invitation-manager/sent/',
+            active: true
+          });
+
+          // Wait for tab to load
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          alert('LinkedIn tab opened. Please wait for the page to load, then click "Check Accepted Connections" again.');
+          btn.disabled = false;
+          btn.textContent = 'Check Accepted Connections';
+          return;
+        }
+
+        // LinkedIn tab exists, switch to it and send message
+        console.log('[Analytics] Found LinkedIn tab:', linkedInTab.id);
+        await chrome.tabs.update(linkedInTab.id, { active: true });
+
+        // Send message to content script
+        await chrome.tabs.sendMessage(linkedInTab.id, { action: 'checkAcceptedConnections' });
+
+        alert('Navigating to check connections... This will check your sent invitations and update accepted connections. Please wait a moment, then refresh this page.');
+
+      } catch (error) {
+        console.error('[Analytics] Error checking connections:', error);
+        alert('Error: Could not check connections. ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Check Accepted Connections';
+      }
+    });
+
     // Add test data button (for demonstration)
     document.getElementById('addTestDataBtn').addEventListener('click', async () => {
       if (confirm('Add test data to analytics? (This will add sample connection requests for demonstration)')) {

@@ -7,7 +7,8 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   
   "host_permissions": [
@@ -27,6 +28,7 @@
         "content/job-detector.js",
         "content/network-crawler.js",
         "content/network-expander.js",
+        "content/connection-monitor.js",
         "content/job-applicator.js",
         "content/linkedin.js"
       ],

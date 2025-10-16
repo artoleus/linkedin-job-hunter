@@ -10,9 +10,9 @@ class JobApplicator {
     };
     this.isRunning = false;
     this.homeLocation = {
-      address: 'Sittingbourne, Kent, UK',
-      lat: 51.3411,
-      lng: 0.7337
+      address: '',  // User's home location - set in settings
+      lat: null,
+      lng: null
     };
 
     this.init();
@@ -161,7 +161,6 @@ class JobApplicator {
       'oxford': { lat: 51.7520, lng: -1.2577 },
       'brighton': { lat: 50.8225, lng: -0.1372 },
       'kent': { lat: 51.2787, lng: 0.5217 },
-      'sittingbourne': { lat: 51.3411, lng: 0.7337 },
       'canterbury': { lat: 51.2802, lng: 1.0789 },
       'maidstone': { lat: 51.2704, lng: 0.5227 },
       'ashford': { lat: 51.1465, lng: 0.8750 },
@@ -247,7 +246,7 @@ class JobApplicator {
             jobCoords.lng
           );
 
-          console.log('[Job Applicator] Distance from Sittingbourne:', Math.round(distance), 'miles');
+          console.log('[Job Applicator] Distance from home location:', Math.round(distance), 'miles');
 
           if (distance > maxDistance) {
             return {
@@ -353,6 +352,78 @@ class JobApplicator {
     }
 
     return null;
+  }
+
+  // Extract salary from job details panel (more accurate than job card)
+  extractSalaryFromJobDetails() {
+    try {
+      // Try multiple selectors for the job details panel
+      const jobDetails = document.querySelector(
+        '.jobs-details, ' +
+        '.jobs-unified-top-card, ' +
+        '.job-details-jobs-unified-top-card, ' +
+        '.jobs-description'
+      );
+
+      if (!jobDetails) {
+        console.log('[Job Applicator] Job details panel not found');
+        return null;
+      }
+
+      // Look for salary in compensation section or badges
+      const salarySelectors = [
+        '.jobs-unified-top-card__job-insight span',
+        '.job-details-jobs-unified-top-card__job-insight span',
+        '.jobs-unified-top-card__bullet',
+        '[class*="compensation"]',
+        '[class*="salary"]'
+      ];
+
+      for (const selector of salarySelectors) {
+        const elements = jobDetails.querySelectorAll(selector);
+
+        for (const element of elements) {
+          const text = element.textContent.trim();
+
+          // Match UK salary format: £50K/yr - £60K/yr or £50,000/yr - £60,000/yr
+          const match = text.match(/£([\d,]+)K?\/yr\s*-\s*£([\d,]+)K?\/yr/i);
+
+          if (match) {
+            const min = match[1].replace(/,/g, '');
+            const max = match[2].replace(/,/g, '');
+
+            // Check if values are in thousands (K format)
+            const isKFormat = text.toUpperCase().includes('K/YR');
+
+            const salaryMin = parseInt(min) * (isKFormat ? 1000 : 1);
+            const salaryMax = parseInt(max) * (isKFormat ? 1000 : 1);
+
+            console.log('[Job Applicator] Found salary in job details:', text);
+
+            return `£${salaryMin.toLocaleString()}-£${salaryMax.toLocaleString()}`;
+          }
+
+          // Also try to match single salary value
+          const singleMatch = text.match(/£([\d,]+)K?\/yr/i);
+          if (singleMatch) {
+            const value = singleMatch[1].replace(/,/g, '');
+            const isKFormat = text.toUpperCase().includes('K/YR');
+            const salary = parseInt(value) * (isKFormat ? 1000 : 1);
+
+            console.log('[Job Applicator] Found single salary in job details:', text);
+
+            return `£${salary.toLocaleString()}`;
+          }
+        }
+      }
+
+      console.log('[Job Applicator] No salary found in job details');
+      return null;
+
+    } catch (error) {
+      console.error('[Job Applicator] Error extracting salary from job details:', error);
+      return null;
+    }
   }
 
   // Check if job has Easy Apply - checks within the job card for the indicator
@@ -625,6 +696,13 @@ class JobApplicator {
       if (!await this.verifyJobTitleInDescription(jobData.jobTitle)) {
         console.log('[Job Applicator] ⚠️ Job title verification failed - skipping');
         return false;
+      }
+
+      // Extract salary from job details panel (more accurate than card)
+      const detailedSalary = this.extractSalaryFromJobDetails();
+      if (detailedSalary) {
+        jobData.salary = detailedSalary;
+        console.log('[Job Applicator] 💰 Updated salary from job details:', detailedSalary);
       }
 
       // Debug: Log all buttons on the page

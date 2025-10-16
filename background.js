@@ -66,9 +66,9 @@ class BackgroundService {
       maxSalary: null,
       workTypes: ['remote', 'hybrid'],  // remote, hybrid, onsite
       homeLocation: {
-        address: 'Sittingbourne, Kent, UK',
-        lat: 51.3411,
-        lng: 0.7337
+        address: '',  // User's home location
+        lat: null,
+        lng: null
       },
       maxHybridDistance: 75,  // miles
       autoFillName: '',
@@ -103,9 +103,9 @@ class BackgroundService {
           maxSalary: null,
           workTypes: ['remote', 'hybrid'],
           homeLocation: {
-            address: 'Sittingbourne, Kent, UK',
-            lat: 51.3411,
-            lng: 0.7337
+            address: '',
+            lat: null,
+            lng: null
           },
           maxHybridDistance: 75
         }
@@ -156,6 +156,16 @@ class BackgroundService {
           sendResponse({ analytics });
           break;
 
+        case 'resetAcceptedToPending':
+          await this.resetAcceptedToPending();
+          sendResponse({ success: true });
+          break;
+
+        case 'recalculateStats':
+          await this.recalculateConnectionStats();
+          sendResponse({ success: true });
+          break;
+
         case 'saveJobApplication':
           await this.saveJobApplication(request.applicationData);
           sendResponse({ success: true });
@@ -169,6 +179,11 @@ class BackgroundService {
         case 'getJobApplications':
           const applications = await this.getJobApplications();
           sendResponse({ applications });
+          break;
+
+        case 'deleteJobApplication':
+          await this.deleteJobApplication(request.applicationId);
+          sendResponse({ success: true });
           break;
 
         default:
@@ -297,10 +312,10 @@ class BackgroundService {
       analytics.stats.totalDeclined = (analytics.stats.totalDeclined || 0) + 1;
     }
 
-    // Recalculate acceptance rate
-    const total = analytics.stats.totalAccepted + analytics.stats.totalDeclined;
-    if (total > 0) {
-      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / total;
+    // Recalculate acceptance rate (accepted / total sent)
+    const totalSent = analytics.stats.totalSent || 0;
+    if (totalSent > 0) {
+      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / totalSent;
     }
 
     // Calculate average response time
@@ -322,6 +337,64 @@ class BackgroundService {
   async getConnectionAnalytics() {
     const result = await chrome.storage.local.get(['connectionAnalytics']);
     return result.connectionAnalytics || { requests: [], stats: {} };
+  }
+
+  async resetAcceptedToPending() {
+    console.log('[Background] Resetting all accepted connections to pending...');
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    let resetCount = 0;
+
+    // Reset all accepted requests to pending
+    analytics.requests.forEach(request => {
+      if (request.status === 'accepted') {
+        request.status = 'pending';
+        request.responseDate = null;
+        resetCount++;
+      }
+    });
+
+    // Recalculate stats
+    await this.recalculateConnectionStats();
+
+    console.log('[Background] Reset complete:', resetCount, 'connections reset to pending');
+  }
+
+  async recalculateConnectionStats() {
+    console.log('[Background] Recalculating connection statistics...');
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+
+    // Recalculate all stats from scratch
+    analytics.stats.totalSent = analytics.requests.length;
+    analytics.stats.totalPending = analytics.requests.filter(r => r.status === 'pending').length;
+    analytics.stats.totalAccepted = analytics.requests.filter(r => r.status === 'accepted').length;
+    analytics.stats.totalDeclined = analytics.requests.filter(r => r.status === 'declined').length;
+
+    // Recalculate acceptance rate (accepted / total sent)
+    if (analytics.stats.totalSent > 0) {
+      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / analytics.stats.totalSent;
+    } else {
+      analytics.stats.acceptanceRate = 0;
+    }
+
+    // Recalculate average response time
+    const respondedRequests = analytics.requests.filter(r => r.responseDate);
+    if (respondedRequests.length > 0) {
+      const totalResponseTime = respondedRequests.reduce((sum, r) => {
+        const sent = new Date(r.sentDate);
+        const responded = new Date(r.responseDate);
+        return sum + (responded - sent);
+      }, 0);
+      analytics.stats.avgResponseTime = totalResponseTime / respondedRequests.length;
+    } else {
+      analytics.stats.avgResponseTime = 0;
+    }
+
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    console.log('[Background] Stats recalculated. Acceptance rate:',
+                Math.round(analytics.stats.acceptanceRate * 100) + '%');
   }
 
   // Job Application Methods
@@ -370,6 +443,18 @@ class BackgroundService {
   async getJobApplications() {
     const result = await chrome.storage.local.get(['jobApplications']);
     return result.jobApplications || { applications: [] };
+  }
+
+  async deleteJobApplication(applicationId) {
+    console.log('[Background] Deleting job application:', applicationId);
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+
+    // Filter out the application to delete
+    jobApps.applications = jobApps.applications.filter(app => app.id !== applicationId);
+
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    console.log('[Background] Job application deleted. Remaining:', jobApps.applications.length);
   }
 }
 

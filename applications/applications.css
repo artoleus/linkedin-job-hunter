@@ -243,6 +243,26 @@ body {
   text-decoration: underline;
 }
 
+/* Delete Button */
+.delete-btn {
+  background: #fce4e4;
+  color: #d93025;
+  border: 1px solid #f5c6cb;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 5px;
+}
+
+.delete-btn:hover {
+  background: #d93025;
+  color: white;
+  border-color: #d93025;
+}
+
 /* Work Type Badge */
 .work-type-badge {
   display: inline-block;
