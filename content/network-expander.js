@@ -101,30 +101,30 @@ class NetworkExpander {
     let templates;
 
     if (isHiringFocused) {
-      // Templates for people who are actively hiring - shows openness to opportunities
+      // Templates for people who are actively hiring - clearly shows you're job seeking
       templates = [
-        `Hi ${profileData.firstName}, I am currently reaching out to professionals in ${profileData.industry || 'the field'} who are hiring. I would appreciate the opportunity to connect, and I look forward to engaging with you personally about opportunities.`,
+        `Hi ${profileData.firstName}, I'm currently exploring new career opportunities in ${profileData.industry || 'the field'} and noticed you're hiring. I would appreciate the chance to connect and discuss potential roles with you.`,
 
-        `Hello ${profileData.firstName}, I noticed you are recruiting in ${profileData.industry || 'your area'}. I am connecting with hiring managers to explore opportunities, and I would value the chance to discuss roles with you directly.`,
+        `Hello ${profileData.firstName}, I noticed you're recruiting in ${profileData.industry || 'your area'}. I'm actively seeking new opportunities and would value the chance to connect and discuss roles you may have available.`,
 
-        `Hi ${profileData.firstName}, I am expanding my network with professionals who are actively hiring in ${profileData.industry || 'the industry'}. I would be delighted to connect and engage with you about potential opportunities.`,
+        `Hi ${profileData.firstName}, I'm reaching out to hiring managers in ${profileData.industry || 'the industry'} as I explore my next career move. I would be delighted to connect and learn more about opportunities you may have.`,
 
-        `Hello ${profileData.firstName}, I came across your profile whilst connecting with people recruiting in ${profileData.industry || 'the field'}. I would appreciate the opportunity to connect and discuss opportunities with you personally.`,
+        `Hello ${profileData.firstName}, I came across your profile while researching professionals in the recruiting field. I'm currently exploring new career opportunities and would appreciate the chance to connect with you.`,
 
-        `Hi ${profileData.firstName}, I am reaching out to those hiring ${profileData.title ? 'for ' + profileData.title + ' roles' : 'in the sector'}. I would value the opportunity to connect and engage with you about openings you may have.`
+        `Hi ${profileData.firstName}, I noticed you're hiring ${profileData.title ? 'for ' + profileData.title + ' roles' : 'in the sector'}. I'm actively seeking new opportunities and would value the chance to connect and discuss openings you may have.`
       ];
     } else {
-      // Templates for general professional networking - subtle openness to opportunities
+      // Templates for general professional networking - shows you're open to opportunities
       templates = [
-        `Hi ${profileData.firstName}, I am currently reaching out to professionals in ${profileData.industry || 'the field'} to expand my network. I would appreciate the opportunity to connect, and I look forward to engaging with you personally.`,
+        `Hi ${profileData.firstName}, I'm currently expanding my professional network in ${profileData.industry || 'the field'} and exploring new opportunities. I would appreciate the chance to connect and engage with you.`,
 
-        `Hello ${profileData.firstName}, I am connecting with professionals in ${profileData.industry || 'similar fields'}. I would value the opportunity to connect and engage with you about our shared interests.`,
+        `Hello ${profileData.firstName}, I'm connecting with professionals in ${profileData.industry || 'similar fields'} as I explore my career path. I would value the opportunity to connect and learn from your experience.`,
 
-        `Hi ${profileData.firstName}, I am expanding my network with professionals in ${profileData.industry || 'the industry'}. I would be delighted to connect and look forward to engaging with you about opportunities in the field.`,
+        `Hi ${profileData.firstName}, I'm building my network with professionals in ${profileData.industry || 'the industry'} and am open to new opportunities. I would be delighted to connect and engage with you.`,
 
-        `Hello ${profileData.firstName}, I have been reaching out to ${profileData.title ? profileData.title + 's' : 'professionals'} to build connections in the industry. It would be great to connect and engage with you personally.`,
+        `Hello ${profileData.firstName}, I've been reaching out to ${profileData.title ? profileData.title + 's' : 'professionals'} to build connections as I explore my next career move. It would be great to connect with you.`,
 
-        `Hi ${profileData.firstName}, I am building connections with talented professionals in ${profileData.industry || 'this field'}. I would appreciate the opportunity to connect and look forward to engaging with you about the industry.`
+        `Hi ${profileData.firstName}, I'm connecting with talented professionals in ${profileData.industry || 'this field'} and exploring new opportunities. I would appreciate the chance to connect and learn about your work.`
       ];
     }
 
