@@ -209,8 +209,9 @@ class AnalyticsDashboard {
     });
 
     const roles = Object.keys(roleStats);
+    // Same definition as the headline stat: accepted / total sent
     const acceptanceRates = roles.map(role => {
-      const total = roleStats[role].accepted + roleStats[role].declined;
+      const total = roleStats[role].total;
       return total > 0 ? (roleStats[role].accepted / total * 100) : 0;
     });
 
@@ -417,7 +418,7 @@ class AnalyticsDashboard {
           <td><strong>${this.escapeHtml(req.fullName)}</strong></td>
           <td>${this.escapeHtml(req.targetRole)}</td>
           <td>${sentDate.toLocaleDateString()} ${sentDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-          <td><span class="status-badge status-${req.status}">${this.capitalize(req.status)}</span></td>
+          <td><span class="status-badge status-${this.escapeHtml(req.status)}">${this.escapeHtml(this.capitalize(req.status))}</span></td>
           <td>${responseTime}</td>
           <td>${this.formatTimeOfDay(req.timeOfDay)}</td>
         </tr>
@@ -430,7 +431,7 @@ class AnalyticsDashboard {
     const roleFilter = document.getElementById('roleFilter');
 
     roleFilter.innerHTML = '<option value="all">All Roles</option>' +
-      roles.map(role => `<option value="${role}">${role}</option>`).join('');
+      roles.map(role => `<option value="${this.escapeHtml(role)}">${this.escapeHtml(role)}</option>`).join('');
   }
 
   filterRequests() {
@@ -440,8 +441,8 @@ class AnalyticsDashboard {
 
     this.filteredRequests = this.analytics.requests.filter(req => {
       const matchesSearch = !searchTerm ||
-        req.fullName.toLowerCase().includes(searchTerm) ||
-        req.targetRole.toLowerCase().includes(searchTerm);
+        (req.fullName || '').toLowerCase().includes(searchTerm) ||
+        (req.targetRole || '').toLowerCase().includes(searchTerm);
 
       const matchesStatus = statusFilter === 'all' || req.status === statusFilter;
       const matchesRole = roleFilter === 'all' || req.targetRole === roleFilter;
@@ -465,7 +466,7 @@ class AnalyticsDashboard {
     ]);
 
     const csv = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .map(row => row.map(cell => this.csvCell(cell)).join(','))
       .join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -499,13 +500,28 @@ class AnalyticsDashboard {
   }
 
   capitalize(str) {
+    if (!str) return '';
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
   escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Quote a CSV cell: double embedded quotes, and prefix values that
+  // spreadsheet apps would treat as formulas (CSV injection)
+  csvCell(value) {
+    let text = value === null || value === undefined ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(text)) {
+      text = "'" + text;
+    }
+    return `"${text.replace(/"/g, '""')}"`;
   }
 
   async addTestData() {

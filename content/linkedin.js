@@ -11,6 +11,18 @@ class LinkedInJobHunter {
 
     this.isInitialized = false;
     this.settings = {};
+    this.autoScanTimeout = null;
+    this.pendingFeedNodes = [];
+    this.scannedPosts = new WeakSet();
+
+    // Keep every component in sync when settings change (e.g. saved from the popup)
+    this.storage.onSettingsChanged((settings) => {
+      this.settings = settings;
+      for (const component of [this.crawler, this.detector, this.networkExpander, this.jobApplicator]) {
+        component.settings = settings;
+      }
+      this.updateIndicator();
+    });
 
     this.init();
   }
@@ -72,22 +84,28 @@ class LinkedInJobHunter {
       right: 10px;
       width: 12px;
       height: 12px;
-      background: ${this.settings.scanEnabled ? '#00a000' : '#666'};
       border-radius: 50%;
       z-index: 10000;
       opacity: 0.7;
       cursor: pointer;
       transition: opacity 0.3s;
     `;
-    
-    indicator.title = this.settings.scanEnabled ? 
-      'Job Hunter: Active' : 'Job Hunter: Inactive';
-      
+
     indicator.addEventListener('click', () => {
       this.toggleScanning();
     });
-    
+
     document.body.appendChild(indicator);
+    this.updateIndicator();
+  }
+
+  updateIndicator() {
+    const indicator = document.getElementById('job-hunter-indicator');
+    if (indicator) {
+      indicator.style.background = this.settings.scanEnabled ? '#00a000' : '#666';
+      indicator.title = this.settings.scanEnabled ?
+        'Job Hunter: Active' : 'Job Hunter: Inactive';
+    }
   }
 
   setupObservers() {
@@ -130,29 +148,44 @@ class LinkedInJobHunter {
   async onFeedUpdate(mutations) {
     if (!this.settings.scanEnabled) return;
 
-    // Debounce feed updates
-    clearTimeout(this.feedUpdateTimeout);
-    this.feedUpdateTimeout = setTimeout(() => {
-      this.scanNewFeedContent(mutations);
-    }, 1000);
-  }
-
-  async scanNewFeedContent(mutations) {
+    // Collect added nodes across mutation batches (previously only the last
+    // batch was scanned). Throttle rather than debounce: the feed mutates
+    // constantly, so a debounce might never fire while nodes pile up.
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          const posts = node.querySelectorAll ? 
-            node.querySelectorAll('[data-urn*="activity"]') : [];
-            
-          for (const post of posts) {
-            await this.scanPost(post);
-          }
+          this.pendingFeedNodes.push(node);
         }
+      }
+    }
+
+    if (this.feedUpdateTimeout) return;
+    this.feedUpdateTimeout = setTimeout(() => {
+      this.feedUpdateTimeout = null;
+      const nodes = this.pendingFeedNodes;
+      this.pendingFeedNodes = [];
+      this.scanNewFeedContent(nodes);
+    }, 1000);
+  }
+
+  async scanNewFeedContent(nodes) {
+    for (const node of nodes) {
+      if (!node.isConnected) continue;
+
+      const posts = node.matches('[data-urn*="activity"]') ?
+        [node] : node.querySelectorAll('[data-urn*="activity"]');
+
+      for (const post of posts) {
+        await this.scanPost(post);
       }
     }
   }
 
   async scanPost(postElement) {
+    // Avoid re-scanning (and re-notifying about) the same post
+    if (this.scannedPosts.has(postElement)) return;
+    this.scannedPosts.add(postElement);
+
     try {
       const opportunity = await this.detector.analyzePost(postElement);
       if (opportunity && opportunity.confidence > 0.5) {
@@ -199,10 +232,13 @@ class LinkedInJobHunter {
   }
 
   scheduleAutoScan() {
+    // Only ever keep one pending auto-scan (toggling on/off/on used to stack timers)
+    clearTimeout(this.autoScanTimeout);
+
     // Auto-scan every 5-15 minutes with random intervals
     const interval = (5 + Math.random() * 10) * 60 * 1000;
-    
-    setTimeout(() => {
+
+    this.autoScanTimeout = setTimeout(() => {
       if (this.settings.scanEnabled) {
         this.runNetworkCrawl();
         this.scheduleAutoScan(); // Reschedule
@@ -221,21 +257,19 @@ class LinkedInJobHunter {
   }
 
   async toggleScanning() {
-    this.settings.scanEnabled = !this.settings.scanEnabled;
+    // Start from the latest stored settings so we don't overwrite changes
+    // saved elsewhere (e.g. the popup) with a stale copy
+    const latest = await this.storage.getSettings();
+    this.settings = { ...latest, scanEnabled: !latest.scanEnabled };
     await this.storage.updateSettings(this.settings);
-    
-    // Update indicator
-    const indicator = document.getElementById('job-hunter-indicator');
-    if (indicator) {
-      indicator.style.background = this.settings.scanEnabled ? '#00a000' : '#666';
-      indicator.title = this.settings.scanEnabled ? 
-        'Job Hunter: Active' : 'Job Hunter: Inactive';
-    }
-    
+
+    this.updateIndicator();
+
     if (this.settings.scanEnabled) {
       this.scheduleAutoScan();
       console.log('Job hunting enabled');
     } else {
+      clearTimeout(this.autoScanTimeout);
       console.log('Job hunting disabled');
     }
   }
@@ -259,12 +293,16 @@ class LinkedInJobHunter {
       transition: opacity 0.3s;
     `;
     
-    toast.innerHTML = `
-      <strong>🎯 Job Opportunity Found!</strong><br>
-      ${opportunity.title}<br>
-      <small>Confidence: ${Math.round(opportunity.confidence * 100)}%</small>
-    `;
-    
+    // Build with textContent: the title comes from arbitrary post text, so
+    // inserting it as HTML would let a crafted post inject markup into the page
+    const heading = document.createElement('strong');
+    heading.textContent = '🎯 Job Opportunity Found!';
+    const title = document.createElement('div');
+    title.textContent = opportunity.title;
+    const confidence = document.createElement('small');
+    confidence.textContent = `Confidence: ${Math.round(opportunity.confidence * 100)}%`;
+    toast.append(heading, title, confidence);
+
     document.body.appendChild(toast);
     
     // Animate in

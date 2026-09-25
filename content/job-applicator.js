@@ -83,12 +83,17 @@ class JobApplicator {
                  (titleLower.includes('security') && titleLower.includes('officer'));
         }
         if (keyword === 'ai') {
-          return titleLower.includes(' ai ') || titleLower.includes('ai ') ||
-                 titleLower.includes(' ai') || titleLower.includes('artificial intelligence');
+          return this.containsWord(titleLower, 'ai') || titleLower.includes('artificial intelligence');
         }
         if (keyword === 'iso27001') {
           return titleLower.includes('iso') || titleLower.includes('27001') ||
                  titleLower.includes('information security');
+        }
+
+        // Short keywords (e.g. "it", "qa", "pm") must match a whole word,
+        // otherwise "it" would match "security" and "pm" would match "development"
+        if (keyword.length <= 3) {
+          return this.containsWord(titleLower, keyword);
         }
 
         // Standard keyword check
@@ -102,6 +107,15 @@ class JobApplicator {
     }
 
     return false;
+  }
+
+  containsWord(text, word) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(text);
+  }
+
+  hasHomeCoordinates() {
+    return Number.isFinite(this.homeLocation?.lat) && Number.isFinite(this.homeLocation?.lng);
   }
 
   // Calculate distance between two coordinates using Haversine formula
@@ -234,12 +248,17 @@ class JobApplicator {
       }
 
       // Check distance for hybrid roles
+      let distance = null;
       if (workType === 'hybrid') {
         const maxDistance = this.settings.maxHybridDistance || 75;
         const jobCoords = this.estimateLocationCoordinates(location);
 
-        if (jobCoords && jobCoords.lat !== 0 && jobCoords.lng !== 0) {
-          const distance = this.calculateDistance(
+        if (!this.hasHomeCoordinates()) {
+          // Without home coordinates the distance would be NaN, which silently
+          // passed every check and was saved as the job's distance
+          console.log('[Job Applicator] ⚠️ Home location coordinates not set - skipping distance check');
+        } else if (jobCoords && jobCoords.lat !== 0 && jobCoords.lng !== 0) {
+          distance = this.calculateDistance(
             this.homeLocation.lat,
             this.homeLocation.lng,
             jobCoords.lat,
@@ -280,12 +299,7 @@ class JobApplicator {
           location,
           workType,
           salary: salary ? `£${salary.min}-${salary.max}` : null,
-          distance: workType === 'hybrid' ? this.calculateDistance(
-            this.homeLocation.lat,
-            this.homeLocation.lng,
-            this.estimateLocationCoordinates(location)?.lat || 0,
-            this.estimateLocationCoordinates(location)?.lng || 0
-          ) : null
+          distance: distance !== null ? Math.round(distance) : null
         }
       };
 
@@ -342,12 +356,16 @@ class JobApplicator {
     if (!salaryElement) return null;
 
     const salaryText = salaryElement.textContent;
-    const match = salaryText.match(/£?([\d,]+)k?\s*-\s*£?([\d,]+)k?/i);
+    const match = salaryText.match(/£?([\d,.]+)(k?)\s*-\s*£?([\d,.]+)(k?)/i);
 
     if (match) {
+      // The "k" suffix is captured separately; previously it was checked for
+      // inside the digits group, so "£50k - £60k" was parsed as £50-£60
+      const toNumber = (digits, suffix) =>
+        Math.round(parseFloat(digits.replace(/,/g, '')) * (suffix ? 1000 : 1));
       return {
-        min: parseInt(match[1].replace(/,/g, '')) * (match[1].includes('k') ? 1000 : 1),
-        max: parseInt(match[2].replace(/,/g, '')) * (match[2].includes('k') ? 1000 : 1)
+        min: toNumber(match[1], match[2]),
+        max: toNumber(match[3], match[4])
       };
     }
 
@@ -452,6 +470,9 @@ class JobApplicator {
   // Start automated job application process
   async startApplying() {
     console.log('[Job Applicator] 🚀 startApplying() called');
+
+    // Reload settings so changes saved in the popup take effect
+    await this.init();
     console.log('[Job Applicator] Settings:', this.settings);
     console.log('[Job Applicator] Is running?', this.isRunning);
     console.log('[Job Applicator] Daily limits:', this.dailyLimits);
@@ -1049,86 +1070,64 @@ class JobApplicator {
   }
 
   autoAnswerCommonQuestions(modal) {
-    // Get all labels and their associated inputs
-    const labels = modal.querySelectorAll('label');
+    // Each rule only fires when the user has explicitly set the matching setting
+    const rules = [
+      {
+        name: 'UK work authorization',
+        matches: (text) => text.includes('legally') && text.includes('work') && text.includes('uk'),
+        answer: 'yes',
+        enabled: this.settings.ukWorkAuth === true
+      },
+      {
+        name: 'sponsorship',
+        matches: (text) => text.includes('sponsorship') || text.includes('visa'),
+        answer: 'no',
+        enabled: this.settings.needsSponsorship === false
+      },
+      {
+        name: 'criminal convictions',
+        matches: (text) => text.includes('criminal') && text.includes('conviction'),
+        answer: 'no',
+        enabled: this.settings.hasCriminalRecord === false
+      },
+      {
+        name: 'reasonable adjustments',
+        matches: (text) => text.includes('reasonable') && text.includes('adjustment'),
+        answer: 'no',
+        enabled: this.settings.needsAdjustments === false
+      }
+    ];
 
-    for (const label of labels) {
+    for (const label of modal.querySelectorAll('label, legend')) {
       const labelText = label.textContent.toLowerCase();
 
-      // UK work authorization question
-      if (labelText.includes('legally') && labelText.includes('work') && labelText.includes('uk')) {
-        console.log('[Job Applicator] 🔍 Found UK work authorization question');
+      for (const rule of rules) {
+        if (!rule.matches(labelText)) continue;
 
-        // Try to find radio buttons or select
-        const fieldset = label.closest('fieldset') || label.parentElement;
-        if (fieldset) {
-          // Look for "Yes" radio button
-          const yesRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
-            const radioLabel = radio.nextElementSibling?.textContent || '';
-            return radioLabel.toLowerCase().includes('yes');
-          });
+        console.log(`[Job Applicator] 🔍 Found ${rule.name} question`);
+        if (!rule.enabled) continue;
 
-          if (yesRadio && !yesRadio.checked && this.settings.ukWorkAuth === true) {
-            yesRadio.click();
-            console.log('[Job Applicator] ✅ Auto-answered UK work authorization: Yes');
-          }
-        }
-      }
+        const group = label.closest('fieldset') || label.parentElement;
+        const radio = group && this.findRadioByAnswer(group, rule.answer);
 
-      // Sponsorship question
-      if (labelText.includes('sponsorship') || labelText.includes('visa')) {
-        console.log('[Job Applicator] 🔍 Found sponsorship question');
-
-        const fieldset = label.closest('fieldset') || label.parentElement;
-        if (fieldset) {
-          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
-            const radioLabel = radio.nextElementSibling?.textContent || '';
-            return radioLabel.toLowerCase().includes('no');
-          });
-
-          if (noRadio && !noRadio.checked && this.settings.needsSponsorship === false) {
-            noRadio.click();
-            console.log('[Job Applicator] ✅ Auto-answered sponsorship: No');
-          }
-        }
-      }
-
-      // Criminal convictions question
-      if (labelText.includes('criminal') && labelText.includes('conviction')) {
-        console.log('[Job Applicator] 🔍 Found criminal convictions question');
-
-        const fieldset = label.closest('fieldset') || label.parentElement;
-        if (fieldset) {
-          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
-            const radioLabel = radio.nextElementSibling?.textContent || '';
-            return radioLabel.toLowerCase().includes('no');
-          });
-
-          if (noRadio && !noRadio.checked && this.settings.hasCriminalRecord === false) {
-            noRadio.click();
-            console.log('[Job Applicator] ✅ Auto-answered criminal convictions: No');
-          }
-        }
-      }
-
-      // Disability/reasonable adjustments question
-      if (labelText.includes('reasonable') && labelText.includes('adjustment')) {
-        console.log('[Job Applicator] 🔍 Found reasonable adjustments question');
-
-        const fieldset = label.closest('fieldset') || label.parentElement;
-        if (fieldset) {
-          const noRadio = Array.from(fieldset.querySelectorAll('input[type="radio"]')).find(radio => {
-            const radioLabel = radio.nextElementSibling?.textContent || '';
-            return radioLabel.toLowerCase().includes('no');
-          });
-
-          if (noRadio && !noRadio.checked && this.settings.needsAdjustments === false) {
-            noRadio.click();
-            console.log('[Job Applicator] ✅ Auto-answered reasonable adjustments: No');
-          }
+        if (radio && !radio.checked) {
+          radio.click();
+          console.log(`[Job Applicator] ✅ Auto-answered ${rule.name}: ${rule.answer}`);
         }
       }
     }
+  }
+
+  // Find the radio whose label is exactly the answer ("Yes"/"No"). Substring
+  // matching picked options like "None" or "Not sure" for "no".
+  findRadioByAnswer(group, answer) {
+    return Array.from(group.querySelectorAll('input[type="radio"]')).find(radio => {
+      const radioLabel = (radio.id && group.querySelector(`label[for="${CSS.escape(radio.id)}"]`)) ||
+                         radio.closest('label') ||
+                         radio.nextElementSibling;
+      const text = (radioLabel?.textContent || radio.value || '').trim().toLowerCase();
+      return text === answer;
+    });
   }
 
   async waitForDoneButton(maxAttempts = 10) {

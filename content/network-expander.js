@@ -33,13 +33,13 @@ class NetworkExpander {
           invitesSent: 0,
           profilesViewed: 0,
           lastResetDate: today,
-          lastRoleIndex: 0  // Reset role rotation
+          lastRoleIndex: -1  // Reset role rotation
         };
         this.saveDailyLimits();
       }
     } else {
       this.dailyLimits.lastResetDate = today;
-      this.dailyLimits.lastRoleIndex = 0;
+      this.dailyLimits.lastRoleIndex = -1;
       this.saveDailyLimits();
     }
   }
@@ -52,8 +52,8 @@ class NetworkExpander {
       return 'developer';
     }
 
-    // Get the last used role index, default to 0
-    const lastIndex = this.dailyLimits.lastRoleIndex || 0;
+    // Get the last used role index (-1 = none yet today, so we start at role 0)
+    const lastIndex = this.dailyLimits.lastRoleIndex ?? -1;
 
     // Move to next role (cycle back to 0 if at end)
     const nextIndex = (lastIndex + 1) % targetRoles.length;
@@ -94,7 +94,9 @@ class NetworkExpander {
   }
 
   // Generate personalized connection message based on profile info
-  generatePersonalizedMessage(profileData) {
+  // maxLength: LinkedIn caps invitation notes (300 chars, lower on some free
+  // accounts); longer text is silently truncated by the textarea
+  generatePersonalizedMessage(profileData, maxLength = 300) {
     // Different templates for hiring managers vs general networking
     const isHiringFocused = this.settings.targetHiringOnly;
 
@@ -128,63 +130,14 @@ class NetworkExpander {
       ];
     }
 
-    // Randomly select a template
-    const template = templates[Math.floor(Math.random() * templates.length)];
-
-    return template;
-  }
-
-  // Extract basic info from profile element
-  extractProfileInfo(profileElement) {
-    try {
-      // Try multiple selectors for name
-      let nameElement = profileElement.querySelector('[class*="entity-result__title"]');
-
-      if (!nameElement) {
-        nameElement = profileElement.querySelector('.discover-entity-type-card__name');
-      }
-
-      if (!nameElement) {
-        nameElement = profileElement.querySelector('[data-anonymize="person-name"]');
-      }
-
-      if (!nameElement) {
-        // Try finding any link that looks like a profile name (usually the first prominent link)
-        nameElement = profileElement.querySelector('a.app-aware-link span[aria-hidden="true"]');
-      }
-
-      const fullName = nameElement ? nameElement.textContent.trim() : '';
-      const firstName = fullName.split(' ')[0] || 'there';
-
-      console.log('[Network Expander] Extracted name:', fullName, 'from element:', nameElement?.className);
-
-      const titleElement = profileElement.querySelector('[class*="entity-result__primary-subtitle"]') ||
-                          profileElement.querySelector('.discover-entity-type-card__headline');
-      const title = titleElement ? titleElement.textContent.trim() : '';
-
-      const companyElement = profileElement.querySelector('[class*="entity-result__secondary-subtitle"]');
-      const company = companyElement ? companyElement.textContent.trim() : '';
-
-      // Try to extract industry from title or company
-      const industry = this.guessIndustry(title, company);
-
-      return {
-        fullName,
-        firstName,
-        title,
-        company,
-        industry
-      };
-    } catch (error) {
-      console.error('[Network Expander] Error extracting profile info:', error);
-      return {
-        fullName: 'there',
-        firstName: 'there',
-        title: '',
-        company: '',
-        industry: 'your field'
-      };
+    // Headlines can be long, so only use templates that fit within the limit
+    const fitting = templates.filter(t => t.length <= maxLength);
+    if (fitting.length === 0) {
+      return templates.reduce((a, b) => (a.length <= b.length ? a : b)).substring(0, maxLength);
     }
+
+    // Randomly select a template
+    return fitting[Math.floor(Math.random() * fitting.length)];
   }
 
   guessIndustry(title, company) {
@@ -234,20 +187,6 @@ class NetworkExpander {
     return shuffled;
   }
 
-  // Simulate viewing a profile (builds rapport before connecting)
-  async viewProfile(profileUrl) {
-    console.log('[Network Expander] Viewing profile:', profileUrl);
-
-    // Open in current tab (more natural than iframe)
-    window.location.href = profileUrl;
-
-    this.dailyLimits.profilesViewed++;
-    this.saveDailyLimits();
-
-    // Wait for profile to load and simulate reading time
-    await this.humanDelay(5000, 15000);
-  }
-
   // Find all Connect buttons on the page
   findAllConnectButtons() {
     const buttons = [];
@@ -279,21 +218,30 @@ class NetworkExpander {
     return buttons;
   }
 
+  // The invite dialog opened by a Connect click (falls back to the whole
+  // document so behaviour degrades gracefully if LinkedIn changes the markup)
+  getInviteDialog() {
+    return document.querySelector('[role="dialog"], .artdeco-modal') || document;
+  }
+
+  // Close a half-finished invite dialog so it doesn't block the next profile
+  dismissInviteDialog() {
+    const dismissBtn = document.querySelector(
+      '[role="dialog"] button[aria-label*="Dismiss"], .artdeco-modal__dismiss');
+    if (dismissBtn) {
+      dismissBtn.click();
+      console.log('[Network Expander] Dismissed unfinished invite dialog');
+    }
+  }
+
   // Send connection request using the button element directly
   async sendConnectionRequestByButton(connectBtn, withMessage = true) {
     try {
-      // Extract profile info from aria-label
-      const ariaLabel = connectBtn.getAttribute('aria-label') || '';
-      const match = ariaLabel.match(/Invite (.+?) to connect/);
-      const fullName = match ? match[1] : 'there';
-      const firstName = fullName.split(' ')[0];
-
-      console.log('[Network Expander] Preparing to connect with:', fullName);
-
       // Try to find the profile container to get more info
       const listItem = connectBtn.closest('li');
       let title = '';
       let company = '';
+      let profileUrl = null;
 
       if (listItem) {
         const titleElem = listItem.querySelector('[class*="entity-result__primary-subtitle"]');
@@ -301,7 +249,21 @@ class NetworkExpander {
 
         const companyElem = listItem.querySelector('[class*="entity-result__secondary-subtitle"]');
         company = companyElem ? companyElem.textContent.trim() : '';
+
+        const profileLink = listItem.querySelector('a[href*="/in/"]');
+        profileUrl = profileLink ? profileLink.href.split('?')[0] : null;
       }
+
+      // Extract name from aria-label, falling back to the card's name element
+      const ariaLabel = connectBtn.getAttribute('aria-label') || '';
+      const match = ariaLabel.match(/Invite (.+?) to connect/);
+      const nameElem = listItem?.querySelector('[data-anonymize="person-name"], a[href*="/in/"] span[aria-hidden="true"]');
+      const fullName = (match ? match[1] : nameElem?.textContent || '').trim();
+      // Greet by first name when known; analytics records 'Unknown' otherwise
+      // (a placeholder like "there" would later fuzzy-match unrelated page text)
+      const firstName = fullName ? fullName.split(' ')[0] : 'there';
+
+      console.log('[Network Expander] Preparing to connect with:', fullName || '(unknown name)');
 
       const industry = this.guessIndustry(title, company);
       const profileInfo = { fullName, firstName, title, company, industry };
@@ -312,182 +274,62 @@ class NetworkExpander {
       connectBtn.click();
       await this.humanDelay(1000, 2000);
 
+      let message = null;
+
       if (withMessage && this.settings.usePersonalizedMessages) {
         // Try to find "Add a note" button
         await this.humanDelay(500, 1000);
 
-        const addNoteBtn = document.querySelector('button[aria-label*="Add a note"]');
+        const addNoteBtn = this.getInviteDialog().querySelector('button[aria-label*="Add a note"]');
 
         if (addNoteBtn) {
           addNoteBtn.click();
           await this.humanDelay(500, 1500);
 
           // Find message textarea
-          const messageBox = document.querySelector('textarea[name="message"]') ||
-                            document.querySelector('#custom-message');
+          const dialog = this.getInviteDialog();
+          const messageBox = dialog.querySelector('textarea[name="message"]') ||
+                            dialog.querySelector('#custom-message');
 
           if (messageBox) {
-            const message = this.generatePersonalizedMessage(profileInfo);
+            const maxLength = messageBox.maxLength > 0 ? messageBox.maxLength : 300;
+            message = this.generatePersonalizedMessage(profileInfo, maxLength);
 
             // Type message character by character (more human-like)
             await this.typeMessage(messageBox, message);
 
             await this.humanDelay(1000, 2000);
-
-            // Find and click send button
-            const sendBtn = document.querySelector('button[aria-label*="Send"]') ||
-                           document.querySelector('button[aria-label*="Done"]');
-
-            if (sendBtn) {
-              sendBtn.click();
-              console.log('[Network Expander] ✅ Sent personalized request to:', fullName);
-
-              this.dailyLimits.invitesSent++;
-              this.saveDailyLimits();
-
-              // Save to analytics
-              await this.saveConnectionAnalytics(fullName, null, message);
-
-              return true;
-            }
           }
         }
       }
 
-      // If no message option or skipping message, just send
-      const sendBtn = document.querySelector('button[aria-label*="Send now"]') ||
-                     document.querySelector('button[aria-label*="Send invitation"]');
+      // Find the send button inside the invite dialog only, so we never click
+      // an unrelated "Send" button elsewhere on the page
+      const dialog = this.getInviteDialog();
+      const sendBtn = dialog.querySelector('button[aria-label*="Send"], button[aria-label*="Done"]') ||
+                     Array.from(dialog.querySelectorAll('button'))
+                       .find(btn => btn.textContent.trim().toLowerCase().startsWith('send'));
 
-      if (sendBtn) {
+      if (sendBtn && !sendBtn.disabled) {
         sendBtn.click();
-        console.log('[Network Expander] ✅ Sent connection request to:', fullName);
+        console.log(`[Network Expander] ✅ Sent ${message ? 'personalised ' : ''}request to:`, fullName || '(unknown name)');
 
         this.dailyLimits.invitesSent++;
         this.saveDailyLimits();
 
         // Save to analytics
-        await this.saveConnectionAnalytics(fullName, null, null);
+        await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, message);
 
         return true;
       }
 
+      console.log('[Network Expander] ⚠️ Send button not found or disabled');
+      this.dismissInviteDialog();
       return false;
 
     } catch (error) {
       console.error('[Network Expander] Error sending connection:', error);
-      return false;
-    }
-  }
-
-  // Send connection request with personalized message
-  async sendConnectionRequest(profileElement, withMessage = true) {
-    try {
-      const profileInfo = this.extractProfileInfo(profileElement);
-      console.log('[Network Expander] Preparing to connect with:', profileInfo.fullName);
-
-      // Try multiple selectors for connect button
-      let connectBtn = profileElement.querySelector('button[aria-label*="Invite"]');
-
-      if (!connectBtn) {
-        connectBtn = profileElement.querySelector('button[aria-label*="Connect"]');
-      }
-
-      if (!connectBtn) {
-        // Try finding by button text content (including nested spans)
-        const buttons = profileElement.querySelectorAll('button');
-        for (const btn of buttons) {
-          // Check button text (may be in nested span with class artdeco-button__text)
-          const text = btn.textContent.trim().toLowerCase();
-          if (text === 'connect' || text === 'invite' || text.includes('connect')) {
-            connectBtn = btn;
-            break;
-          }
-        }
-      }
-
-      if (!connectBtn) {
-        // Try finding span with artdeco-button__text class containing "Connect"
-        const spans = profileElement.querySelectorAll('span.artdeco-button__text');
-        for (const span of spans) {
-          if (span.textContent.trim().toLowerCase() === 'connect') {
-            connectBtn = span.closest('button');
-            break;
-          }
-        }
-      }
-
-      if (!connectBtn) {
-        console.log('[Network Expander] No connect button found, trying to log available buttons...');
-        const allButtons = profileElement.querySelectorAll('button');
-        console.log(`[Network Expander] Found ${allButtons.length} buttons in profile card:`);
-        allButtons.forEach((btn, i) => {
-          console.log(`  Button ${i}: "${btn.textContent.trim()}" aria-label="${btn.getAttribute('aria-label')}"`);
-        });
-        return false;
-      }
-
-      console.log('[Network Expander] Found connect button:', connectBtn.textContent.trim());
-
-      // Click connect
-      connectBtn.click();
-      await this.humanDelay(1000, 2000);
-
-      if (withMessage) {
-        // Try to find "Add a note" button
-        const addNoteBtn = document.querySelector('button[aria-label*="Add a note"]') ||
-                          document.querySelector('button:has-text("Add a note")');
-
-        if (addNoteBtn) {
-          addNoteBtn.click();
-          await this.humanDelay(500, 1500);
-
-          // Find message textarea
-          const messageBox = document.querySelector('textarea[name="message"]') ||
-                            document.querySelector('#custom-message');
-
-          if (messageBox) {
-            const message = this.generatePersonalizedMessage(profileInfo);
-
-            // Type message character by character (more human-like)
-            await this.typeMessage(messageBox, message);
-
-            await this.humanDelay(1000, 2000);
-
-            // Find and click send button
-            const sendBtn = document.querySelector('button[aria-label*="Send"]') ||
-                           document.querySelector('button[aria-label*="Done"]');
-
-            if (sendBtn) {
-              sendBtn.click();
-              console.log('[Network Expander] ✅ Sent personalized request to:', profileInfo.fullName);
-
-              this.dailyLimits.invitesSent++;
-              this.saveDailyLimits();
-
-              return true;
-            }
-          }
-        }
-      }
-
-      // If no message option or skipping message, just send
-      const sendBtn = document.querySelector('button[aria-label*="Send now"]') ||
-                     document.querySelector('button[aria-label*="Send invitation"]');
-
-      if (sendBtn) {
-        sendBtn.click();
-        console.log('[Network Expander] ✅ Sent connection request to:', profileInfo.fullName);
-
-        this.dailyLimits.invitesSent++;
-        this.saveDailyLimits();
-
-        return true;
-      }
-
-      return false;
-
-    } catch (error) {
-      console.error('[Network Expander] Error sending connection:', error);
+      this.dismissInviteDialog();
       return false;
     }
   }
@@ -910,70 +752,6 @@ class NetworkExpander {
     // Navigate to search page (script will resume after page loads via checkPendingExpansion)
     console.log('[Network Expander] Navigating to:', searchUrl);
     window.location.href = searchUrl;
-  }
-
-  // Expand network for a single role
-  async expandSingleRole(targetRole, maxConnections) {
-    // Build search URL
-    let searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(targetRole)}`;
-
-    if (this.settings.targetHiringOnly) {
-      searchUrl += '&serviceCategories=%5B%22HIRING%22%5D';
-    }
-
-    // Navigate to search page
-    window.location.href = searchUrl;
-
-    // Wait for navigation and page load
-    await new Promise(resolve => {
-      const checkPage = setInterval(() => {
-        if (window.location.href.includes('/search/results/people/')) {
-          clearInterval(checkPage);
-          resolve();
-        }
-      }, 500);
-    });
-
-    // Wait for page to settle
-    await this.humanDelay(5000, 8000);
-
-    // Find and process connect buttons
-    const connectButtons = this.findAllConnectButtons();
-    console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons`);
-
-    if (connectButtons.length === 0) {
-      console.log('[Network Expander] ⚠️ No Connect buttons found, skipping this role');
-      return;
-    }
-
-    // Shuffle for randomization
-    const shuffledButtons = this.shuffleArray([...connectButtons]);
-
-    let connected = 0;
-    for (const button of shuffledButtons) {
-      if (connected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
-        break;
-      }
-
-      // Random skip
-      if (Math.random() < 0.3) {
-        console.log('[Network Expander] Randomly skipping (30% chance)');
-        continue;
-      }
-
-      const success = await this.sendConnectionRequestByButton(button, true);
-      if (success) {
-        connected++;
-        console.log(`[Network Expander] ✅ ${connected}/${maxConnections} for this role`);
-      }
-
-      // Delay between connections
-      if (connected < maxConnections && !this.hasReachedDailyLimit() && this.isRunning) {
-        await this.humanDelay(10000, 30000);
-      }
-    }
-
-    console.log(`[Network Expander] Completed role "${targetRole}": ${connected} connections sent`);
   }
 
   stopExpanding() {

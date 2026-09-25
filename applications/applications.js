@@ -99,20 +99,21 @@ class ApplicationsTracker {
       const appliedDate = new Date(app.appliedDate);
       const workTypeBadge = this.getWorkTypeBadge(app.workType);
       const statusBadge = this.getStatusBadge(app.status);
+      const jobUrl = this.escapeHtml(this.safeUrl(app.jobUrl));
 
       return `
         <tr>
           <td><strong>${this.escapeHtml(app.jobTitle)}</strong></td>
           <td>${this.escapeHtml(app.company)}</td>
           <td>${workTypeBadge}</td>
-          <td>${this.formatSalary(app.salary)}</td>
+          <td>${this.escapeHtml(this.formatSalary(app.salary))}</td>
           <td>${this.escapeHtml(app.location)}</td>
           <td>${appliedDate.toLocaleDateString()} ${appliedDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
           <td>${statusBadge}</td>
           <td>
-            <a href="${app.jobUrl}" target="_blank" class="action-link">View Job</a>
-            ${app.status === 'draft' ? `<a href="${app.jobUrl}" target="_blank" class="action-link">Complete</a>` : ''}
-            <button class="delete-btn" data-app-id="${app.id}" title="Delete application">Delete</button>
+            ${jobUrl ? `<a href="${jobUrl}" target="_blank" rel="noopener" class="action-link">View Job</a>` : ''}
+            ${jobUrl && app.status === 'draft' ? `<a href="${jobUrl}" target="_blank" rel="noopener" class="action-link">Complete</a>` : ''}
+            <button class="delete-btn" data-app-id="${this.escapeHtml(app.id)}" title="Delete application">Delete</button>
           </td>
         </tr>
       `;
@@ -126,8 +127,8 @@ class ApplicationsTracker {
 
     this.filteredApplications = this.applications.filter(app => {
       const matchesSearch = !searchTerm ||
-        app.jobTitle.toLowerCase().includes(searchTerm) ||
-        app.company.toLowerCase().includes(searchTerm);
+        (app.jobTitle || '').toLowerCase().includes(searchTerm) ||
+        (app.company || '').toLowerCase().includes(searchTerm);
 
       const matchesStatus = statusFilter === 'all' || app.status === statusFilter;
       const matchesWorkType = workTypeFilter === 'all' || app.workType === workTypeFilter;
@@ -152,7 +153,7 @@ class ApplicationsTracker {
     ]);
 
     const csv = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
+      .map(row => row.map(cell => this.csvCell(cell)).join(','))
       .join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -167,8 +168,8 @@ class ApplicationsTracker {
   getWorkTypeBadge(workType) {
     if (!workType) return '<span class="work-type-badge">Unknown</span>';
 
-    const badgeClass = `work-type-${workType.toLowerCase()}`;
-    return `<span class="work-type-badge ${badgeClass}">${this.capitalize(workType)}</span>`;
+    const badgeClass = `work-type-${this.escapeHtml(workType.toLowerCase())}`;
+    return `<span class="work-type-badge ${badgeClass}">${this.escapeHtml(this.capitalize(workType))}</span>`;
   }
 
   getStatusBadge(status) {
@@ -182,7 +183,7 @@ class ApplicationsTracker {
       statusText = 'Submitted';
     }
 
-    return `<span class="status-badge ${statusClass}">${this.capitalize(statusText)}</span>`;
+    return `<span class="status-badge ${this.escapeHtml(statusClass)}">${this.escapeHtml(this.capitalize(statusText))}</span>`;
   }
 
   formatSalary(salary) {
@@ -208,10 +209,33 @@ class ApplicationsTracker {
   }
 
   escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Only allow http(s) links (blocks javascript: and similar URLs)
+  safeUrl(url) {
+    try {
+      const parsed = new URL(url);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch {
+      return '';
+    }
+  }
+
+  // Quote a CSV cell: double embedded quotes, and prefix values that
+  // spreadsheet apps would treat as formulas (CSV injection)
+  csvCell(value) {
+    let text = value === null || value === undefined ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(text)) {
+      text = "'" + text;
+    }
+    return `"${text.replace(/"/g, '""')}"`;
   }
 
   async deleteApplication(appId) {

@@ -3,7 +3,22 @@
 class BackgroundService {
   constructor() {
     console.log('[Background] Service worker starting...');
+    // Serialises read-modify-write storage operations so concurrent messages
+    // (e.g. several connection requests saved in quick succession) can't
+    // overwrite each other's changes.
+    this.writeQueue = Promise.resolve();
     this.init();
+  }
+
+  // Run fn after all previously queued writes have finished
+  withLock(fn) {
+    const result = this.writeQueue.then(fn);
+    this.writeQueue = result.catch(() => {});
+    return result;
+  }
+
+  generateId() {
+    return Date.now().toString() + Math.random().toString(36).slice(2, 8);
   }
 
   init() {
@@ -117,7 +132,7 @@ class BackgroundService {
     try {
       switch (request.action) {
         case 'saveOpportunity':
-          await this.saveOpportunity(request.opportunity);
+          await this.withLock(() => this.saveOpportunity(request.opportunity));
           sendResponse({ success: true });
           break;
 
@@ -127,7 +142,7 @@ class BackgroundService {
           break;
 
         case 'updateScanStats':
-          await this.updateScanStats(request.stats);
+          await this.withLock(() => this.updateScanStats(request.stats));
           sendResponse({ success: true });
           break;
 
@@ -137,17 +152,17 @@ class BackgroundService {
           break;
 
         case 'updateSettings':
-          await this.updateSettings(request.settings);
+          await this.withLock(() => this.updateSettings(request.settings));
           sendResponse({ success: true });
           break;
 
         case 'saveConnectionRequest':
-          await this.saveConnectionRequest(request.requestData);
+          await this.withLock(() => this.saveConnectionRequest(request.requestData));
           sendResponse({ success: true });
           break;
 
         case 'updateConnectionStatus':
-          await this.updateConnectionStatus(request.requestId, request.status);
+          await this.withLock(() => this.updateConnectionStatus(request.requestId, request.status));
           sendResponse({ success: true });
           break;
 
@@ -157,22 +172,22 @@ class BackgroundService {
           break;
 
         case 'resetAcceptedToPending':
-          await this.resetAcceptedToPending();
+          await this.withLock(() => this.resetAcceptedToPending());
           sendResponse({ success: true });
           break;
 
         case 'recalculateStats':
-          await this.recalculateConnectionStats();
+          await this.withLock(() => this.recalculateConnectionStats());
           sendResponse({ success: true });
           break;
 
         case 'saveJobApplication':
-          await this.saveJobApplication(request.applicationData);
+          await this.withLock(() => this.saveJobApplication(request.applicationData));
           sendResponse({ success: true });
           break;
 
         case 'updateJobApplication':
-          await this.updateJobApplication(request.applicationId, request.updates);
+          await this.withLock(() => this.updateJobApplication(request.applicationId, request.updates));
           sendResponse({ success: true });
           break;
 
@@ -182,7 +197,7 @@ class BackgroundService {
           break;
 
         case 'deleteJobApplication':
-          await this.deleteJobApplication(request.applicationId);
+          await this.withLock(() => this.deleteJobApplication(request.applicationId));
           sendResponse({ success: true });
           break;
 
@@ -211,7 +226,7 @@ class BackgroundService {
       return;
     }
 
-    opportunity.id = Date.now().toString();
+    opportunity.id = this.generateId();
     opportunity.dateFound = new Date().toISOString();
     opportunity.status = 'new';
     opportunities.push(opportunity);
@@ -264,7 +279,7 @@ class BackgroundService {
     const analytics = result.connectionAnalytics || { requests: [], stats: {} };
 
     const request = {
-      id: Date.now().toString(),
+      id: this.generateId(),
       targetRole: requestData.targetRole,
       fullName: requestData.fullName,
       profileUrl: requestData.profileUrl,
@@ -277,10 +292,7 @@ class BackgroundService {
     };
 
     analytics.requests.push(request);
-
-    // Update stats
-    analytics.stats.totalSent = (analytics.stats.totalSent || 0) + 1;
-    analytics.stats.totalPending = (analytics.stats.totalPending || 0) + 1;
+    analytics.stats = this.computeConnectionStats(analytics.requests);
 
     await chrome.storage.local.set({ connectionAnalytics: analytics });
     console.log('[Background] Connection request saved. Total sent:', analytics.stats.totalSent);
@@ -297,37 +309,13 @@ class BackgroundService {
       return;
     }
 
-    const oldStatus = request.status;
+    if (request.status === status) {
+      return;
+    }
+
     request.status = status;
-    request.responseDate = new Date().toISOString();
-
-    // Update stats
-    if (oldStatus === 'pending') {
-      analytics.stats.totalPending = Math.max(0, (analytics.stats.totalPending || 0) - 1);
-    }
-
-    if (status === 'accepted') {
-      analytics.stats.totalAccepted = (analytics.stats.totalAccepted || 0) + 1;
-    } else if (status === 'declined') {
-      analytics.stats.totalDeclined = (analytics.stats.totalDeclined || 0) + 1;
-    }
-
-    // Recalculate acceptance rate (accepted / total sent)
-    const totalSent = analytics.stats.totalSent || 0;
-    if (totalSent > 0) {
-      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / totalSent;
-    }
-
-    // Calculate average response time
-    const respondedRequests = analytics.requests.filter(r => r.responseDate);
-    if (respondedRequests.length > 0) {
-      const totalResponseTime = respondedRequests.reduce((sum, r) => {
-        const sent = new Date(r.sentDate);
-        const responded = new Date(r.responseDate);
-        return sum + (responded - sent);
-      }, 0);
-      analytics.stats.avgResponseTime = totalResponseTime / respondedRequests.length;
-    }
+    request.responseDate = status === 'pending' ? null : new Date().toISOString();
+    analytics.stats = this.computeConnectionStats(analytics.requests);
 
     await chrome.storage.local.set({ connectionAnalytics: analytics });
     console.log('[Background] Connection status updated. Acceptance rate:',
@@ -355,8 +343,10 @@ class BackgroundService {
       }
     });
 
-    // Recalculate stats
-    await this.recalculateConnectionStats();
+    // Persist the reset (previously the changes were discarded because stats
+    // were recalculated from a fresh storage read before saving)
+    analytics.stats = this.computeConnectionStats(analytics.requests);
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
 
     console.log('[Background] Reset complete:', resetCount, 'connections reset to pending');
   }
@@ -366,35 +356,33 @@ class BackgroundService {
     const result = await chrome.storage.local.get(['connectionAnalytics']);
     const analytics = result.connectionAnalytics || { requests: [], stats: {} };
 
-    // Recalculate all stats from scratch
-    analytics.stats.totalSent = analytics.requests.length;
-    analytics.stats.totalPending = analytics.requests.filter(r => r.status === 'pending').length;
-    analytics.stats.totalAccepted = analytics.requests.filter(r => r.status === 'accepted').length;
-    analytics.stats.totalDeclined = analytics.requests.filter(r => r.status === 'declined').length;
-
-    // Recalculate acceptance rate (accepted / total sent)
-    if (analytics.stats.totalSent > 0) {
-      analytics.stats.acceptanceRate = analytics.stats.totalAccepted / analytics.stats.totalSent;
-    } else {
-      analytics.stats.acceptanceRate = 0;
-    }
-
-    // Recalculate average response time
-    const respondedRequests = analytics.requests.filter(r => r.responseDate);
-    if (respondedRequests.length > 0) {
-      const totalResponseTime = respondedRequests.reduce((sum, r) => {
-        const sent = new Date(r.sentDate);
-        const responded = new Date(r.responseDate);
-        return sum + (responded - sent);
-      }, 0);
-      analytics.stats.avgResponseTime = totalResponseTime / respondedRequests.length;
-    } else {
-      analytics.stats.avgResponseTime = 0;
-    }
+    analytics.stats = this.computeConnectionStats(analytics.requests);
 
     await chrome.storage.local.set({ connectionAnalytics: analytics });
     console.log('[Background] Stats recalculated. Acceptance rate:',
                 Math.round(analytics.stats.acceptanceRate * 100) + '%');
+  }
+
+  // Derive all connection stats from the request list so they can never drift
+  computeConnectionStats(requests) {
+    const countBy = (status) => requests.filter(r => r.status === status).length;
+    const totalSent = requests.length;
+    const totalAccepted = countBy('accepted');
+
+    // Average response time (accepted/declined requests only)
+    const responded = requests.filter(r => r.responseDate && r.status !== 'pending');
+    const totalResponseTime = responded.reduce(
+      (sum, r) => sum + (new Date(r.responseDate) - new Date(r.sentDate)), 0);
+
+    return {
+      totalSent,
+      totalAccepted,
+      totalDeclined: countBy('declined'),
+      totalPending: countBy('pending'),
+      // Acceptance rate is accepted / total sent
+      acceptanceRate: totalSent > 0 ? totalAccepted / totalSent : 0,
+      avgResponseTime: responded.length > 0 ? totalResponseTime / responded.length : 0
+    };
   }
 
   // Job Application Methods
@@ -404,7 +392,7 @@ class BackgroundService {
     const jobApps = result.jobApplications || { applications: [] };
 
     const application = {
-      id: Date.now().toString(),
+      id: this.generateId(),
       jobId: applicationData.jobId,
       jobTitle: applicationData.jobTitle,
       company: applicationData.company,

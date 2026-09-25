@@ -3,6 +3,28 @@
 class StorageManager {
   constructor() {
     this.cache = new Map();
+    this.settingsListeners = [];
+
+    // Settings can be changed from the popup (or another tab). Drop the cached
+    // copy so components never act on, or write back, stale settings.
+    if (chrome.storage?.onChanged) {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'local' && changes.settings) {
+          const newSettings = changes.settings.newValue;
+          if (newSettings) {
+            this.cache.set('settings', newSettings);
+          } else {
+            this.cache.delete('settings');
+          }
+          this.settingsListeners.forEach(listener => listener(newSettings || {}));
+        }
+      });
+    }
+  }
+
+  // Register a callback invoked with the new settings whenever they change
+  onSettingsChanged(listener) {
+    this.settingsListeners.push(listener);
   }
 
   // Send message to background service worker
@@ -65,7 +87,7 @@ class StorageManager {
         excludeKeywords: ['not hiring', 'position filled'],
         targetRoles: ['developer', 'engineer', 'programmer', 'software']
       };
-      this.cache.set('settings', defaultSettings);
+      // Don't cache the fallback, so the next call retries the real settings
       return defaultSettings;
     }
 

@@ -379,28 +379,37 @@ class ConnectionMonitor {
     return false; // Don't assume acceptance
   }
 
-  namesMatch(name1, name2) {
-    // Simple name matching - remove extra spaces, compare lowercase
-    const n1 = name1.toLowerCase().replace(/\s+/g, ' ').trim();
-    const n2 = name2.toLowerCase().replace(/\s+/g, ' ').trim();
+  namesMatch(text, fullName) {
+    const normalize = (str) => (str || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const haystack = normalize(text);
+    const name = normalize(fullName);
+
+    // Never match placeholder or very short names: an empty name is a
+    // substring of everything and would mark every request as accepted
+    if (name.length < 3 || name === 'there' || name === 'unknown' || !haystack) {
+      return false;
+    }
 
     // Exact match
-    if (n1 === n2) return true;
+    if (haystack === name) return true;
 
-    // Check if one is substring of other (for "John Smith" vs "John M. Smith")
-    if (n1.includes(n2) || n2.includes(n1)) return true;
+    // Whole-word containment (e.g. the name inside a card's text), so
+    // "Al Li" doesn't match inside "Sal Lin"
+    const escape = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const containsWords = (outer, inner) =>
+      inner.length >= 3 && new RegExp(`(^|[^\\p{L}'-])${escape(inner)}($|[^\\p{L}'-])`, 'u').test(outer);
 
-    // Check first and last name match
-    const parts1 = n1.split(' ');
-    const parts2 = n2.split(' ');
+    if (containsWords(haystack, name)) return true;
+    // Reverse direction only for multi-word card names (a lone "John" is too weak)
+    if (haystack.includes(' ') && containsWords(name, haystack)) return true;
 
-    if (parts1.length >= 2 && parts2.length >= 2) {
-      const first1 = parts1[0];
-      const last1 = parts1[parts1.length - 1];
-      const first2 = parts2[0];
-      const last2 = parts2[parts2.length - 1];
+    // First and last name match (for "John Smith" vs "John M. Smith")
+    const parts1 = haystack.split(' ');
+    const parts2 = name.split(' ');
 
-      return first1 === first2 && last1 === last2;
+    if (parts1.length >= 2 && parts2.length >= 2 && parts1.length <= 5) {
+      return parts1[0] === parts2[0] &&
+             parts1[parts1.length - 1] === parts2[parts2.length - 1];
     }
 
     return false;

@@ -94,6 +94,8 @@ class NetworkCrawler {
       const opportunities = await detector.detectOpportunities();
       
       for (const opportunity of opportunities) {
+        // Same auto-save threshold as LinkedInJobHunter.scanCurrentPage()
+        if (opportunity.confidence <= 0.4) continue;
         await this.storage.saveOpportunity(opportunity);
         this.scanStats.opportunitiesFound++;
       }

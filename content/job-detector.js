@@ -4,7 +4,9 @@ class JobDetector {
   constructor(storage) {
     this.storage = storage;
     this.settings = {};
-    this.init();
+    // Settings load asynchronously; analysis awaits this so early scans don't
+    // run with no keywords configured (which silently matched nothing)
+    this.ready = this.init();
   }
 
   async init() {
@@ -13,6 +15,7 @@ class JobDetector {
 
   // Main detection method
   async detectOpportunities() {
+    await this.ready;
     const opportunities = [];
 
     try {
@@ -74,6 +77,7 @@ class JobDetector {
   }
 
   async analyzePost(postElement) {
+    await this.ready;
     try {
       const textContent = postElement.textContent.toLowerCase();
 
@@ -106,7 +110,9 @@ class JobDetector {
       const author = authorElement ? this.extractPersonInfo(authorElement) : null;
       
       const contentElement = postElement.querySelector('.break-words');
-      const content = contentElement ? contentElement.textContent.trim() : '';
+      // Fall back to the whole post text if LinkedIn's markup changes
+      const content = (contentElement ? contentElement.textContent : postElement.textContent)
+        .replace(/\s+/g, ' ').trim();
 
       const timeElement = postElement.querySelector('time');
       const timePosted = timeElement ? timeElement.getAttribute('datetime') : null;

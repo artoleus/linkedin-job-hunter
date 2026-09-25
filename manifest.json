@@ -23,7 +23,6 @@
     {
       "matches": ["https://*.linkedin.com/*"],
       "js": [
-        "test-inject.js",
         "storage/storage.js",
         "content/job-detector.js",
         "content/network-crawler.js",
@@ -45,12 +44,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  
-  "web_accessible_resources": [
-    {
-      "resources": ["content/*", "analytics/*", "applications/*", "lib/*"],
-      "matches": ["https://*.linkedin.com/*", "https://*/*", "http://*/*"]
-    }
-  ]
+  }
 }

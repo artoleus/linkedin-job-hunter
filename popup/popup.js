@@ -268,7 +268,7 @@ class PopupController {
       .slice(0, 3);
 
     container.innerHTML = recent.map(opp => `
-      <div class="opportunity-item" data-url="${opp.url || ''}">
+      <div class="opportunity-item" data-url="${this.escapeHtml(this.safeUrl(opp.url))}">
         <div class="opportunity-title">${this.escapeHtml(opp.title)}</div>
         <div class="opportunity-company">${this.escapeHtml(opp.company || 'Unknown Company')}</div>
         <div class="opportunity-meta">
@@ -572,28 +572,30 @@ class PopupController {
       if (document.getElementById('workTypeHybrid').checked) workTypes.push('hybrid');
       if (document.getElementById('workTypeOnsite').checked) workTypes.push('onsite');
 
+      // Keep the delay range valid even if min > max was entered
+      const delayA = this.readNumber('minDelay', 2) * 1000;
+      const delayB = this.readNumber('maxDelay', 8) * 1000;
+
       const newSettings = {
         ...this.settings,
-        maxProfilesPerDay: parseInt(document.getElementById('maxProfiles').value),
-        minDelay: parseInt(document.getElementById('minDelay').value) * 1000,
-        maxDelay: parseInt(document.getElementById('maxDelay').value) * 1000,
+        maxProfilesPerDay: this.readNumber('maxProfiles', 80),
+        minDelay: Math.min(delayA, delayB),
+        maxDelay: Math.max(delayA, delayB),
         keywords: document.getElementById('keywords').value
           .split(',').map(s => s.trim()).filter(s => s),
         targetRoles: document.getElementById('targetRoles').value
           .split(',').map(s => s.trim()).filter(s => s),
-        maxDailyInvites: parseInt(document.getElementById('maxDailyInvites').value),
-        connectionsPerRole: parseInt(document.getElementById('connectionsPerRole').value),
+        maxDailyInvites: this.readNumber('maxDailyInvites', 30),
+        connectionsPerRole: this.readNumber('connectionsPerRole', 3),
         usePersonalizedMessages: document.getElementById('usePersonalizedMessages').checked,
         targetHiringOnly: document.getElementById('targetHiringOnly').checked,
 
         // Job application settings
-        maxDailyApplications: parseInt(document.getElementById('maxDailyApplications').value),
+        maxDailyApplications: this.readNumber('maxDailyApplications', 20),
         targetJobRoles: document.getElementById('targetJobRoles').value
           .split(',').map(s => s.trim()).filter(s => s),
-        minSalary: document.getElementById('minSalary').value ?
-          parseInt(document.getElementById('minSalary').value) : null,
-        maxSalary: document.getElementById('maxSalary').value ?
-          parseInt(document.getElementById('maxSalary').value) : null,
+        minSalary: this.readNumber('minSalary', null),
+        maxSalary: this.readNumber('maxSalary', null),
         workTypes: workTypes,
         autoFillName: document.getElementById('autoFillName').value.trim(),
         autoFillEmail: document.getElementById('autoFillEmail').value.trim(),
@@ -672,7 +674,7 @@ class PopupController {
               <span class="confidence">${Math.round(opp.confidence * 100)}% match</span>
             </div>
             ${opp.content ? `<div class="content">${this.escapeHtml(opp.content)}</div>` : ''}
-            ${opp.url ? `<div><a href="${opp.url}" target="_blank">View Original Post</a></div>` : ''}
+            ${this.safeUrl(opp.url) ? `<div><a href="${this.escapeHtml(this.safeUrl(opp.url))}" target="_blank" rel="noopener">View Original Post</a></div>` : ''}
           </div>
         `).join('')}
       </body>
@@ -718,9 +720,28 @@ class PopupController {
 
   escapeHtml(text) {
     if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Only allow http(s) links (blocks javascript: and similar URLs)
+  safeUrl(url) {
+    try {
+      const parsed = new URL(url);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch {
+      return '';
+    }
+  }
+
+  // Parse a numeric input, falling back to a default when empty/invalid
+  readNumber(id, fallback) {
+    const value = parseInt(document.getElementById(id).value, 10);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 
   showSuccess(message) {
