@@ -29,6 +29,7 @@ class PopupController {
       // Fill the settings form once; the periodic refresh never touches it,
       // so unsaved edits aren't wiped while typing
       this.populateSettingsForm();
+      await this.updateReminders();
 
       // Load network status and job application status
       await this.updateNetworkStatus();
@@ -163,6 +164,11 @@ class PopupController {
       this.viewApplications();
     });
 
+    // Application answers page
+    document.getElementById('viewAnswers').addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('answers/answers.html') });
+    });
+
     // Backup & restore page
     document.getElementById('viewBackup').addEventListener('click', () => {
       chrome.tabs.create({ url: chrome.runtime.getURL('backup-restore/backup.html') });
@@ -187,6 +193,17 @@ class PopupController {
     document.getElementById('stopJobApplication').addEventListener('click', () => {
       this.stopJobApplication();
     });
+  }
+
+  // Things waiting for the user, shown next to the page links
+  async updateReminders() {
+    try {
+      const { questions = [] } = await chrome.runtime.sendMessage({ action: 'getUnansweredQuestions' });
+      document.getElementById('answersBadge').textContent =
+        questions.length ? `(${questions.length} question${questions.length === 1 ? '' : 's'} waiting)` : '';
+    } catch (error) {
+      console.error('Failed to load reminders:', error);
+    }
   }
 
   updateUI() {

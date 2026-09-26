@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Application Answers - LinkedIn Job Hunter</title>
+  <link rel="stylesheet" href="../applications/applications.css">
+  <link rel="stylesheet" href="answers.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>📝 Application Answers</h1>
+      <p class="subtitle">
+        Auto Apply fills in Easy Apply questions from these answers. Anything left blank or "Not set"
+        is left for you: the application is saved as a draft and the question appears below to answer once.
+      </p>
+    </header>
+
+    <section id="waitingPanel" class="panel waiting hidden">
+      <h2>❓ Questions waiting for an answer <span id="waitingCount" class="count-badge"></span></h2>
+      <p class="hint">These stopped an application. Answer each one once and future applications will fill it in.</p>
+      <div id="waitingList"></div>
+    </section>
+
+    <form id="answersForm" autocomplete="off">
+      <section class="panel">
+        <h2>Right to work &amp; working arrangements</h2>
+        <div id="yesNoGrid" class="field-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Security clearance</h2>
+        <div class="field-grid">
+          <label class="field">
+            <span>Clearance you currently hold</span>
+            <select id="clearanceLevel">
+              <option value="">Not set (ask me)</option>
+              <option value="none">None</option>
+              <option value="bpss">BPSS</option>
+              <option value="ctc">CTC</option>
+              <option value="sc">SC</option>
+              <option value="dv">DV</option>
+              <option value="edv">eDV</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Eligible and willing to undergo clearance</span>
+            <select id="willingToObtainClearance" class="yes-no"></select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Experience</h2>
+        <div class="field-grid">
+          <label class="field">
+            <span>Total years of work experience</span>
+            <input type="number" id="totalYears" min="0" max="60" placeholder="e.g. 15">
+          </label>
+          <label class="field wide">
+            <span>Certifications you hold <small>(comma separated)</small></span>
+            <input type="text" id="certifications" placeholder="e.g. CISSP, CISM, ISO 27001 Lead Implementer">
+          </label>
+        </div>
+        <h3>Years of experience by skill</h3>
+        <p class="hint">Used for "How many years of experience do you have with …?" and "Do you have experience with …?".
+          A skill that isn't listed is left for you rather than guessed.</p>
+        <table class="rows-table">
+          <thead><tr><th>Skill or technology</th><th class="narrow">Years</th><th class="narrow"></th></tr></thead>
+          <tbody id="skillsBody"></tbody>
+        </table>
+        <button type="button" id="addSkillBtn" class="btn btn-secondary small">+ Add skill</button>
+      </section>
+
+      <section class="panel">
+        <h2>Salary &amp; notice</h2>
+        <div class="field-grid">
+          <label class="field">
+            <span>Salary expectation (£ per year)</span>
+            <input type="number" id="salaryExpectation" min="0" step="1000" placeholder="e.g. 65000">
+          </label>
+          <label class="field">
+            <span>Notice period</span>
+            <input type="text" id="noticePeriod" placeholder="e.g. Immediately, 2 weeks, 1 month">
+          </label>
+        </div>
+        <p class="hint">Questions about your <em>current</em> salary or a day rate are always left for you.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Education &amp; language</h2>
+        <div class="field-grid">
+          <label class="field">
+            <span>Highest level of education</span>
+            <select id="educationLevel">
+              <option value="">Not set (ask me)</option>
+              <option value="secondary">GCSEs / high school</option>
+              <option value="alevel">A-levels / college</option>
+              <option value="foundation">Foundation degree / HND</option>
+              <option value="bachelors">Bachelor's degree</option>
+              <option value="masters">Master's degree</option>
+              <option value="doctorate">Doctorate / PhD</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>English level</span>
+            <select id="englishProficiency">
+              <option value="">Not set (ask me)</option>
+              <option value="basic">Basic</option>
+              <option value="conversational">Conversational</option>
+              <option value="professional">Professional</option>
+              <option value="native">Native or bilingual</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Links</h2>
+        <div class="field-grid">
+          <label class="field">
+            <span>LinkedIn profile URL</span>
+            <input type="url" id="linkedinUrl" placeholder="https://www.linkedin.com/in/…">
+          </label>
+          <label class="field">
+            <span>Website or portfolio</span>
+            <input type="url" id="websiteUrl" placeholder="https://…">
+          </label>
+          <label class="field">
+            <span>GitHub</span>
+            <input type="url" id="githubUrl" placeholder="https://github.com/…">
+          </label>
+        </div>
+        <p class="hint">Your name, email and phone number come from the extension popup's settings.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Your own answers</h2>
+        <p class="hint">For anything else. If a question contains the words on the left, the answer on the right is used.
+          Answers can be <em>Yes</em>/<em>No</em>, a number, or the text of the option to pick. These are checked first.</p>
+        <table class="rows-table">
+          <thead><tr><th>If the question contains</th><th>Answer</th><th class="narrow"></th></tr></thead>
+          <tbody id="customBody"></tbody>
+        </table>
+        <button type="button" id="addCustomBtn" class="btn btn-secondary small">+ Add answer</button>
+      </section>
+    </form>
+
+    <section class="panel">
+      <h2>🧪 Try a question</h2>
+      <p class="hint">Check what Auto Apply would answer, using the answers on this page (including unsaved changes).</p>
+      <div class="try-row">
+        <input type="text" id="tryQuestion" placeholder="e.g. Are you legally authorised to work in the United Kingdom?">
+        <select id="tryType">
+          <option value="yesno">Yes / No choice</option>
+          <option value="numeric">Number box</option>
+          <option value="text">Text box</option>
+        </select>
+      </div>
+      <div id="tryResult" class="try-result"></div>
+    </section>
+
+    <div class="save-bar">
+      <span id="saveStatus"></span>
+      <button type="button" id="saveBtn" class="btn btn-primary">Save answers</button>
+    </div>
+  </div>
+
+  <script src="../shared/text-utils.js"></script>
+  <script src="../shared/answer-bank.js"></script>
+  <script src="answers.js"></script>
+</body>
+</html>

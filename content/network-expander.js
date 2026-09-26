@@ -101,7 +101,7 @@ class NetworkExpander {
     // Different templates for hiring managers vs general networking
     const isHiringFocused = this.settings.targetHiringOnly;
     // Just the job title from the headline, e.g. "Senior IT Manager"
-    const role = this.shortRole(profileData.title);
+    const role = TextUtils.shortRole(profileData.title);
 
     let templates;
 
@@ -141,46 +141,6 @@ class NetworkExpander {
 
     // Randomly select a template
     return fitting[Math.floor(Math.random() * fitting.length)];
-  }
-
-  // "Senior IT Manager at Acme Ltd | ISO 27001" -> "Senior IT Manager".
-  // Returns '' when the headline doesn't reduce to a short job title.
-  shortRole(headline) {
-    const role = (headline || '').split(/\s+(?:at|@)\s+|\s*[|,•·–—/]\s*|\s+-\s+/i)[0].trim();
-    return role.length > 0 && role.length <= 40 ? role : '';
-  }
-
-  containsWord(text, word) {
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(text);
-  }
-
-  guessIndustry(title, company) {
-    // Checked in order, most specific first ("Security Engineer" is
-    // cybersecurity, not software; "AI Governance" is AI, not GRC)
-    const keywords = [
-      ['AI', ['ai', 'artificial intelligence', 'machine learning', 'ml']],
-      ['cybersecurity', ['security', 'cyber', 'ciso', 'grc', 'governance', 'risk', 'compliance', '27001', 'infosec']],
-      ['IT', ['it', 'infrastructure', 'linux', 'sysadmin', 'systems administrator', 'devops', 'cloud', 'automation']],
-      ['software', ['developer', 'engineer', 'programmer', 'software', 'tech']],
-      ['marketing', ['marketing', 'growth', 'brand', 'digital marketing']],
-      ['sales', ['sales', 'account', 'business development']],
-      ['design', ['designer', 'ux', 'ui', 'creative']],
-      ['product', ['product', 'pm', 'product manager']],
-      ['data', ['data', 'analyst', 'analytics', 'scientist']]
-    ];
-
-    const combined = `${title} ${company}`.toLowerCase();
-    // Short keywords must be whole words ("it" shouldn't match "security")
-    const matches = word => word.length <= 3 ? this.containsWord(combined, word) : combined.includes(word);
-
-    for (const [industry, words] of keywords) {
-      if (words.some(matches)) {
-        return industry;
-      }
-    }
-
-    return 'the field';
   }
 
   // Check if we've reached daily limits
@@ -367,7 +327,7 @@ class NetworkExpander {
 
       console.log('[Network Expander] Preparing to connect with:', displayName);
 
-      const industry = this.guessIndustry(title, company);
+      const industry = TextUtils.guessIndustry(title, company);
       const profileInfo = { fullName, firstName, title, company, industry };
 
       console.log('[Network Expander] Profile info:', profileInfo);

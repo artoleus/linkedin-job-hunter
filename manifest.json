@@ -24,6 +24,8 @@
       "matches": ["https://*.linkedin.com/*"],
       "js": [
         "storage/storage.js",
+        "shared/text-utils.js",
+        "shared/answer-bank.js",
         "content/job-detector.js",
         "content/network-crawler.js",
         "content/network-expander.js",

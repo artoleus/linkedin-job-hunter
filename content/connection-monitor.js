@@ -380,39 +380,7 @@ class ConnectionMonitor {
   }
 
   namesMatch(text, fullName) {
-    const normalize = (str) => (str || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const haystack = normalize(text);
-    const name = normalize(fullName);
-
-    // Never match placeholder or very short names: an empty name is a
-    // substring of everything and would mark every request as accepted
-    if (name.length < 3 || name === 'there' || name === 'unknown' || !haystack) {
-      return false;
-    }
-
-    // Exact match
-    if (haystack === name) return true;
-
-    // Whole-word containment (e.g. the name inside a card's text), so
-    // "Al Li" doesn't match inside "Sal Lin"
-    const escape = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const containsWords = (outer, inner) =>
-      inner.length >= 3 && new RegExp(`(^|[^\\p{L}'-])${escape(inner)}($|[^\\p{L}'-])`, 'u').test(outer);
-
-    if (containsWords(haystack, name)) return true;
-    // Reverse direction only for multi-word card names (a lone "John" is too weak)
-    if (haystack.includes(' ') && containsWords(name, haystack)) return true;
-
-    // First and last name match (for "John Smith" vs "John M. Smith")
-    const parts1 = haystack.split(' ');
-    const parts2 = name.split(' ');
-
-    if (parts1.length >= 2 && parts2.length >= 2 && parts1.length <= 5) {
-      return parts1[0] === parts2[0] &&
-             parts1[parts1.length - 1] === parts2[parts2.length - 1];
-    }
-
-    return false;
+    return TextUtils.namesMatch(text, fullName);
   }
 
   // Manual method to check all pending connections

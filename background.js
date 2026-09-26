@@ -210,6 +210,25 @@ class BackgroundService {
           });
           break;
 
+        case 'recordUnansweredQuestions':
+          await this.withLock(() => this.recordUnansweredQuestions(request.questions, request.job));
+          sendResponse({ success: true });
+          break;
+
+        case 'getUnansweredQuestions':
+          sendResponse({ questions: await this.getUnansweredQuestions() });
+          break;
+
+        case 'removeUnansweredQuestions':
+          await this.withLock(() => this.removeUnansweredQuestions(request.keys));
+          sendResponse({ success: true });
+          break;
+
+        case 'addCustomAnswer':
+          await this.withLock(() => this.addCustomAnswer(request.match, request.answer, request.key));
+          sendResponse({ success: true });
+          break;
+
         case 'deleteJobApplication':
           await this.withLock(() => this.deleteJobApplication(request.applicationId));
           sendResponse({ success: true });
@@ -438,6 +457,56 @@ class BackgroundService {
       acceptanceRate: totalSent > 0 ? totalAccepted / totalSent : 0,
       avgResponseTime: responded.length > 0 ? totalResponseTime / responded.length : 0
     };
+  }
+
+  // Application questions the saved answers didn't cover, keyed by their
+  // normalised text, shown on the Application Answers page to answer once
+  async recordUnansweredQuestions(questions = [], job = {}) {
+    const result = await chrome.storage.local.get(['unansweredQuestions']);
+    const waiting = result.unansweredQuestions || {};
+    const now = new Date().toISOString();
+
+    for (const q of questions) {
+      if (!q || !q.key || !q.question) continue;
+      const existing = waiting[q.key];
+      waiting[q.key] = {
+        key: q.key,
+        question: String(q.question).slice(0, 500),
+        type: q.type || 'text',
+        options: [...new Set([...(existing?.options || []), ...(q.options || [])])].slice(0, 40),
+        count: (existing?.count || 0) + 1,
+        firstSeen: existing?.firstSeen || now,
+        lastSeen: now,
+        lastJob: [job.jobTitle, job.company].filter(Boolean).join(' at ')
+      };
+    }
+
+    // Keep the most recent 200
+    const entries = Object.values(waiting).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen)).slice(0, 200);
+    await chrome.storage.local.set({ unansweredQuestions: Object.fromEntries(entries.map(e => [e.key, e])) });
+  }
+
+  async getUnansweredQuestions() {
+    const result = await chrome.storage.local.get(['unansweredQuestions']);
+    return Object.values(result.unansweredQuestions || {})
+      .sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen));
+  }
+
+  async removeUnansweredQuestions(keys = []) {
+    const result = await chrome.storage.local.get(['unansweredQuestions']);
+    const waiting = result.unansweredQuestions || {};
+    keys.forEach(key => delete waiting[key]);
+    await chrome.storage.local.set({ unansweredQuestions: waiting });
+  }
+
+  // Save an answer to one question (from the Application Answers page)
+  async addCustomAnswer(match, answer, key) {
+    const settings = await this.getSettings();
+    const bank = settings.answerBank || {};
+    const customAnswers = (bank.customAnswers || []).filter(rule => rule.match !== match);
+    customAnswers.push({ match, answer });
+    await chrome.storage.local.set({ settings: { ...settings, answerBank: { ...bank, customAnswers } } });
+    if (key) await this.removeUnansweredQuestions([key]);
   }
 
   // Job Application Methods

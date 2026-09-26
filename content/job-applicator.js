@@ -58,60 +58,13 @@ class JobApplicator {
     return this.dailyLimits.applicationsSubmitted >= maxApplications;
   }
 
-  // Flexible role matching - checks if any keyword from target roles appears in job title
+  // Flexible role matching (see TextUtils.matchTargetRole)
   matchesTargetRoles(jobTitle, targetRoles) {
-    if (!targetRoles || targetRoles.length === 0) return false;
-
-    const titleLower = jobTitle.toLowerCase();
-
-    // Check each target role
-    for (const role of targetRoles) {
-      const roleLower = role.toLowerCase().trim();
-
-      // Split role into individual keywords (e.g., "IT Manager" -> ["it", "manager"])
-      const keywords = roleLower.split(/\s+/);
-
-      // Check if ALL keywords from this role appear in the title (order doesn't matter)
-      const allKeywordsMatch = keywords.every(keyword => {
-        // Handle common abbreviations and variations
-        if (keyword === 'grc') {
-          return titleLower.includes('grc') || titleLower.includes('governance') ||
-                 titleLower.includes('risk') || titleLower.includes('compliance');
-        }
-        if (keyword === 'vciso' || keyword === 'ciso') {
-          return titleLower.includes('ciso') || titleLower.includes('vciso') ||
-                 (titleLower.includes('security') && titleLower.includes('officer'));
-        }
-        if (keyword === 'ai') {
-          return this.containsWord(titleLower, 'ai') || titleLower.includes('artificial intelligence');
-        }
-        if (keyword === 'iso27001') {
-          return titleLower.includes('iso') || titleLower.includes('27001') ||
-                 titleLower.includes('information security');
-        }
-
-        // Short keywords (e.g. "it", "qa", "pm") must match a whole word,
-        // otherwise "it" would match "security" and "pm" would match "development"
-        if (keyword.length <= 3) {
-          return this.containsWord(titleLower, keyword);
-        }
-
-        // Standard keyword check
-        return titleLower.includes(keyword);
-      });
-
-      if (allKeywordsMatch) {
-        console.log('[Job Applicator] ✅ Matched role:', role, 'in title:', jobTitle);
-        return true;
-      }
+    const matched = TextUtils.matchTargetRole(jobTitle, targetRoles);
+    if (matched) {
+      console.log('[Job Applicator] ✅ Matched role:', matched, 'in title:', jobTitle);
     }
-
-    return false;
-  }
-
-  containsWord(text, word) {
-    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(text);
+    return !!matched;
   }
 
   hasHomeCoordinates() {
@@ -512,6 +465,7 @@ class JobApplicator {
     }
 
     this.isRunning = true;
+    this.processedJobs = new Set();
     console.log('[Job Applicator] ✅ On search page, starting job processing...');
     console.log('[Job Applicator] 🎯 Target roles:', targetRoles);
 
@@ -598,8 +552,10 @@ class JobApplicator {
       // Wait for page to load
       await this.humanDelay(3000, 5000);
 
-      // Find all job cards
-      const jobCards = document.querySelectorAll('.job-card-container, .jobs-search-results__list-item');
+      // Find all job cards. The list item and the card inside it both match
+      // these selectors, so keep only the innermost to avoid doing each job twice.
+      const matches = Array.from(document.querySelectorAll('.job-card-container, .jobs-search-results__list-item'));
+      const jobCards = matches.filter(card => !matches.some(other => other !== card && card.contains(other)));
       console.log('[Job Applicator] Found', jobCards.length, 'job cards on page', currentPage);
 
       if (jobCards.length === 0) {
@@ -629,6 +585,12 @@ class JobApplicator {
 
         // Click job to open details
         const jobLink = jobCard.querySelector('a.job-card-container__link, a.job-card-list__title');
+        const jobKey = jobLink?.href || `${matchResult.jobData.jobTitle}|${matchResult.jobData.company}`;
+        if (this.processedJobs.has(jobKey)) {
+          continue;
+        }
+        this.processedJobs.add(jobKey);
+
         if (jobLink) {
           jobLink.click();
           await this.humanDelay(2000, 4000);
@@ -763,6 +725,13 @@ class JobApplicator {
 
       console.log('[Job Applicator] ✅ Found Easy Apply button:', easyApplyBtn.textContent.trim());
 
+      // A form left open from the previous job would swallow this one
+      if (this.findEasyApplyModal() && !await this.closeEasyApplyModal()) {
+        console.log('[Job Applicator] 🛑 An application form is still open and could not be closed - stopping');
+        this.stopApplying();
+        return false;
+      }
+
       // Click Easy Apply
       easyApplyBtn.click();
       await this.humanDelay(2000, 3000);
@@ -786,9 +755,7 @@ class JobApplicator {
           }
         });
 
-        // Close modal
-        const closeBtn = document.querySelector('button[aria-label*="Dismiss"], button[data-test-modal-close-btn]');
-        if (closeBtn) closeBtn.click();
+        await this.closeEasyApplyModal();
 
         return false;
       }
@@ -824,90 +791,96 @@ class JobApplicator {
     }
   }
 
+  // Poll until check() returns something truthy, or give up after timeoutMs
+  async waitFor(check, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const result = check();
+      if (result) return result;
+      await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 100));
+    }
+    return check() || null;
+  }
+
+  isVisible(el) {
+    return !!el && el.getClientRects().length > 0;
+  }
+
+  // The open Easy Apply form. The messaging panel also uses role="dialog", so
+  // "the first dialog on the page" could be the wrong one.
+  findEasyApplyModal() {
+    const candidates = Array.from(document.querySelectorAll(
+      '.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"]'))
+      .filter(el => this.isVisible(el) &&
+                    !el.closest('#msg-overlay, .msg-overlay-container, [class*="msg-overlay"]'));
+
+    return candidates.find(el => el.matches('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"]')) ||
+           candidates.find(el => el.querySelector('.jobs-easy-apply-content, form') &&
+                                 /apply to|easy apply|submit application|contact info/i.test(el.textContent)) ||
+           null;
+  }
+
   detectCoverLetterRequirement() {
     // Look for cover letter textarea or requirement text
-    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
+    const modal = this.findEasyApplyModal();
     if (!modal) return false;
 
     const text = modal.textContent.toLowerCase();
     const hasCoverLetterField = modal.querySelector('textarea[name*="cover"], textarea[id*="cover"]');
     const hasCoverLetterText = text.includes('cover letter') && !text.includes('optional');
+    if (!hasCoverLetterField && !hasCoverLetterText) return false;
 
-    return !!(hasCoverLetterField || hasCoverLetterText);
+    // A saved answer for cover letter questions lets the form filler handle it
+    return !AnswerBank.resolve('Cover letter', { type: 'textarea' }, this.settings);
   }
 
   async fillAndSubmitApplication(jobData) {
     try {
       console.log('[Job Applicator] Filling application form...');
 
-      // LinkedIn Easy Apply is multi-step - need to handle Next/Review/Submit buttons
-      let currentStep = 0;
-      const maxSteps = 5;
+      // LinkedIn Easy Apply is multi-step: contact info, CV, questions, review
+      const maxSteps = 10;
+      let previousPage = null;
 
-      while (currentStep < maxSteps) {
+      for (let step = 0; step < maxSteps && this.isRunning; step++) {
         await this.humanDelay(1000, 2000);
 
-        // Check for required custom questions that we can't auto-fill
-        const hasRequiredQuestions = this.detectRequiredCustomQuestions();
-        if (hasRequiredQuestions) {
-          console.log('[Job Applicator] ⚠️ Detected required custom questions - saving as draft');
-
-          // Save application as draft for manual completion
-          await chrome.runtime.sendMessage({
-            action: 'saveJobApplication',
-            applicationData: {
-              ...jobData,
-              jobId: window.location.href,
-              jobUrl: window.location.href,
-              status: 'draft',
-              requiresCustomQuestions: true,
-              notes: 'Has required custom questions - needs manual completion'
-            }
-          });
-
-          // Leave modal open so user can return to it later
-          // LinkedIn will auto-save the draft when they dismiss it
-          console.log('[Job Applicator] Leaving modal open for user to complete manually');
-
+        const modal = this.findEasyApplyModal();
+        if (!modal) {
+          console.log('[Job Applicator] ⚠️ The application form is no longer open');
           return false;
         }
 
-        // Auto-fill any visible fields
-        await this.autoFillFields();
+        // Fill in what the saved answers cover, then see what's still missing
+        const missing = await this.answerQuestions(modal);
+        const errors = this.getValidationErrors(modal);
 
-        // Look for Next, Review, or Submit button
-        const nextBtn = document.querySelector('button[aria-label*="Continue"], button[aria-label*="Review"], button[aria-label*="Submit"]');
+        // Landing on the same page again means LinkedIn didn't accept it
+        const heading = modal.querySelector('h3, h2')?.textContent.trim() || '';
+        const page = heading + '|' + this.collectFormFields(modal).map(field => field.question).join('|');
+        const stuck = page === previousPage;
+        previousPage = page;
 
+        if (missing.length || errors.length || stuck) {
+          await this.saveDraftForMissingAnswers(jobData, missing, errors);
+          await this.closeEasyApplyModal();
+          return false;
+        }
+
+        const nextBtn = this.findFormButton(modal);
         if (!nextBtn) {
-          console.log('[Job Applicator] No more buttons found');
+          console.log('[Job Applicator] No Next/Review/Submit button found');
           break;
         }
 
-        // Check if button is disabled (usually means required fields not filled)
         if (nextBtn.disabled) {
           console.log('[Job Applicator] ⚠️ Next/Submit button is disabled - likely has required fields');
-
-          // Save application as draft
-          await chrome.runtime.sendMessage({
-            action: 'saveJobApplication',
-            applicationData: {
-              ...jobData,
-              jobId: window.location.href,
-              jobUrl: window.location.href,
-              status: 'draft',
-              requiresCustomQuestions: true,
-              notes: 'Button disabled - has unfilled required fields'
-            }
-          });
-
-          // Leave modal open so user can return to it later
-          // LinkedIn will auto-save the draft when they dismiss it
-          console.log('[Job Applicator] Leaving modal open for user to complete manually');
-
+          await this.saveDraftForMissingAnswers(jobData, [], ['The Next button stayed disabled']);
+          await this.closeEasyApplyModal();
           return false;
         }
 
-        const buttonText = nextBtn.textContent.toLowerCase();
+        const buttonText = `${nextBtn.getAttribute('aria-label') || ''} ${nextBtn.textContent}`.toLowerCase();
 
         if (buttonText.includes('submit')) {
           // Final submit
@@ -924,12 +897,11 @@ class JobApplicator {
           }
 
           return true;
-        } else {
-          // Next/Review step
-          nextBtn.click();
-          console.log('[Job Applicator] Moved to next step');
-          currentStep++;
         }
+
+        // Next/Review step
+        nextBtn.click();
+        console.log('[Job Applicator] Moved to next step');
       }
 
       return false;
@@ -940,194 +912,269 @@ class JobApplicator {
     }
   }
 
-  detectRequiredCustomQuestions() {
-    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
-    if (!modal) return false;
+  // Answer the questions on the current page from the saved answers.
+  // Returns the required fields that are still empty.
+  async answerQuestions(modal) {
+    for (const field of this.collectFormFields(modal)) {
+      if (field.filled || !field.question || field.type === 'date') continue;
 
-    // Look for "Additional Questions" heading - if not present, this is likely just Contact Info page
-    const modalText = modal.textContent;
-    const hasAdditionalQuestions = modalText.includes('Additional Questions');
+      const resolved = AnswerBank.resolve(field.question, field, this.settings);
+      if (!resolved) continue;
 
-    if (hasAdditionalQuestions) {
-      console.log('[Job Applicator] 🔍 Found "Additional Questions" section');
-    } else {
-      console.log('[Job Applicator] No "Additional Questions" section - likely just Contact Info');
+      if (await this.applyAnswer(field, resolved.value)) {
+        console.log(`[Job Applicator] ✍️ "${field.question}" → "${[].concat(resolved.value).join(', ')}" (from ${resolved.source})`);
+        await this.humanDelay(400, 1200);
+      } else {
+        console.log(`[Job Applicator] ⚠️ Couldn't enter the saved answer for "${field.question}"`);
+      }
     }
 
-    // Find all required fields (marked with * or aria-required)
-    const requiredTextAreas = modal.querySelectorAll('textarea[required], textarea[aria-required="true"]');
-    const requiredInputs = modal.querySelectorAll('input[required], input[aria-required="true"]');
-    const requiredSelects = modal.querySelectorAll('select[required], select[aria-required="true"]');
+    return this.collectFormFields(modal).filter(field => field.required && !field.filled);
+  }
 
-    // Check for error messages indicating UNFILLED required fields
-    const errorMessages = modal.querySelectorAll('[class*="error"], [class*="invalid"]');
-    const hasErrorText = Array.from(errorMessages).some(el => {
-      const text = el.textContent.toLowerCase();
-      return text.includes('please enter') ||
-             text.includes('required') ||
-             text.includes('must') ||
-             text.includes('this field');
-    });
+  // Every question on the current page of the form
+  collectFormFields(modal) {
+    const fields = [];
+    const isRequired = (el) => el.required || el.getAttribute('aria-required') === 'true';
 
-    // Only flag EMPTY required text areas (custom questions that need manual input)
-    const emptyRequiredTextAreas = Array.from(requiredTextAreas).filter(ta => !ta.value.trim());
+    // Radio buttons and checkboxes, grouped by fieldset (or by name)
+    const groups = new Map();
+    for (const input of modal.querySelectorAll('input[type="radio"], input[type="checkbox"]')) {
+      const container = input.closest('fieldset');
+      const key = container || `${input.type}:${input.name || input.id}`;
+      if (!groups.has(key)) groups.set(key, { container, inputs: [] });
+      groups.get(key).inputs.push(input);
+    }
+    for (const { container, inputs } of groups.values()) {
+      const legend = container && (container.querySelector('legend') ||
+                                   container.querySelector('[class*="form-element__label"]'));
+      const choices = inputs.map(input => ({ input, label: this.choiceLabel(input, modal) }));
+      const question = this.readLabel(legend) || (inputs.length === 1 ? choices[0].label : '');
+      fields.push({
+        type: inputs[0].type === 'radio' ? 'radio' : 'checkbox',
+        question,
+        options: choices.map(choice => choice.label),
+        choices,
+        required: inputs.some(isRequired) || container?.getAttribute('aria-required') === 'true',
+        filled: inputs.some(input => input.checked)
+      });
+    }
 
-    // Only flag EMPTY required inputs (excluding standard fields like email, phone which are auto-filled)
-    const emptyRequiredInputs = Array.from(requiredInputs).filter(input => {
-      // Ignore email, phone, name fields - these are standard and auto-filled
-      const type = input.type;
-      const name = input.name?.toLowerCase() || '';
-      const id = input.id?.toLowerCase() || '';
+    for (const select of modal.querySelectorAll('select')) {
+      if (!this.isVisible(select)) continue;
+      const choices = Array.from(select.options)
+        .filter(option => !this.isPlaceholderOption(option))
+        .map(option => ({ option, label: option.textContent.trim() }));
+      const selected = select.options[select.selectedIndex];
+      fields.push({
+        type: 'select',
+        element: select,
+        question: this.fieldLabel(select, modal),
+        options: choices.map(choice => choice.label),
+        choices,
+        required: isRequired(select),
+        filled: !!selected && !this.isPlaceholderOption(selected)
+      });
+    }
 
-      const isStandardField =
-        type === 'email' ||
-        type === 'tel' ||
-        name.includes('email') ||
-        name.includes('phone') ||
-        name.includes('name') ||
-        id.includes('email') ||
-        id.includes('phone') ||
-        id.includes('name');
+    const skipTypes = ['radio', 'checkbox', 'hidden', 'file', 'submit', 'button', 'image', 'reset'];
+    for (const input of modal.querySelectorAll('input, textarea')) {
+      if (input.tagName === 'INPUT' && skipTypes.includes(input.type)) continue;
+      if (!this.isVisible(input)) continue;
 
-      // Only flag if it's empty AND not a standard field
-      return !isStandardField && !input.value.trim();
-    });
+      const isTypeahead = input.getAttribute('role') === 'combobox' || input.getAttribute('aria-autocomplete') === 'list';
+      const isNumeric = input.type === 'number' || /numeric/i.test(input.id || '') ||
+                        ['numeric', 'decimal'].includes(input.inputMode);
+      const type = input.tagName === 'TEXTAREA' ? 'textarea'
+        : isTypeahead ? 'typeahead'
+        : input.type === 'date' ? 'date'
+        : isNumeric ? 'numeric' : 'text';
 
-    // Only flag UNSELECTED required selects
-    const emptyRequiredSelects = Array.from(requiredSelects).filter(select =>
-      !select.value || select.value === '' || select.value === 'Select'
-    );
+      fields.push({
+        type,
+        element: input,
+        question: this.fieldLabel(input, modal),
+        options: [],
+        required: isRequired(input),
+        filled: input.value.trim() !== ''
+      });
+    }
 
-    // Look for required radio/checkbox groups WITHOUT selection
-    const radioGroups = modal.querySelectorAll('fieldset');
-    const unfilledRadioGroups = Array.from(radioGroups).filter(fieldset => {
-      const radios = fieldset.querySelectorAll('input[type="radio"]');
-      if (radios.length > 0) {
-        // Check if any radio is required
-        const hasRequiredRadio = Array.from(radios).some(r => r.required || r.getAttribute('aria-required') === 'true');
-        if (!hasRequiredRadio) return false;
+    return fields;
+  }
 
-        // Check if any is selected
-        const hasSelection = Array.from(radios).some(r => r.checked);
-        return !hasSelection;
+  // LinkedIn repeats label text for screen readers; prefer the visible copy
+  readLabel(el) {
+    if (!el) return '';
+    const visible = el.querySelector('span[aria-hidden="true"]');
+    return TextUtils.dedupeRepeatedText((visible || el).textContent)
+      .replace(/\s*\*?\s*\(?required\)?\s*$/i, '')
+      .trim();
+  }
+
+  fieldLabel(el, modal) {
+    let label = el.id ? modal.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
+    if (!label) label = el.closest('label');
+    if (!label && el.getAttribute('aria-labelledby')) {
+      label = document.getElementById(el.getAttribute('aria-labelledby').split(' ')[0]);
+    }
+    return this.readLabel(label) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
+  }
+
+  choiceLabel(input, modal) {
+    const label = (input.id && modal.querySelector(`label[for="${CSS.escape(input.id)}"]`)) || input.closest('label');
+    return this.readLabel(label) || input.value || '';
+  }
+
+  isPlaceholderOption(option) {
+    return option.value === '' ||
+           /^(select an option|select|please select|choose|choose an option|-+)$/i.test(option.textContent.trim());
+  }
+
+  // Enter an answer from AnswerBank.resolve() into a field
+  async applyAnswer(field, value) {
+    switch (field.type) {
+      case 'select': {
+        const choice = field.choices.find(c => c.label === value);
+        if (!choice) return false;
+        field.element.focus();
+        field.element.value = choice.option.value;
+        field.element.dispatchEvent(new Event('input', { bubbles: true }));
+        field.element.dispatchEvent(new Event('change', { bubbles: true }));
+        field.element.blur();
+        return field.element.value === choice.option.value;
       }
-      return false;
-    });
 
-    const hasRequiredFields =
-      emptyRequiredTextAreas.length > 0 ||
-      emptyRequiredInputs.length > 0 ||
-      emptyRequiredSelects.length > 0 ||
-      unfilledRadioGroups.length > 0 ||
-      hasErrorText;
+      case 'radio': {
+        const choice = field.choices.find(c => c.label === value);
+        if (!choice) return false;
+        choice.input.click();
+        return choice.input.checked;
+      }
 
-    if (hasRequiredFields) {
-      console.log('[Job Applicator] ⚠️ Unfilled required fields detected:', {
-        emptyTextAreas: emptyRequiredTextAreas.length,
-        emptyInputs: emptyRequiredInputs.length,
-        emptySelects: emptyRequiredSelects.length,
-        unfilledRadioGroups: unfilledRadioGroups.length,
-        hasErrors: hasErrorText,
-        isAdditionalQuestionsPage: hasAdditionalQuestions
+      case 'checkbox': {
+        const wanted = [].concat(value);
+        for (const choice of field.choices) {
+          if (wanted.includes(choice.label) && !choice.input.checked) {
+            choice.input.click();
+          }
+        }
+        return field.choices.some(c => wanted.includes(c.label) && c.input.checked);
+      }
+
+      case 'typeahead': {
+        // Type the answer, then pick the matching suggestion LinkedIn offers
+        this.setInputValue(field.element, String(value), false);
+        const suggestion = await this.waitFor(() => {
+          const options = Array.from(document.querySelectorAll('[role="listbox"] [role="option"], .basic-typeahead__selectable'))
+            .filter(option => this.isVisible(option));
+          return options.find(option => TextUtils.normalize(option.textContent).includes(TextUtils.normalize(String(value)))) ||
+                 options[0];
+        }, 4000);
+        if (!suggestion) return false;
+        suggestion.click();
+        return true;
+      }
+
+      default:
+        this.setInputValue(field.element, String(value));
+        return field.element.value === String(value);
+    }
+  }
+
+  // Set a text field's value so LinkedIn's form code registers it
+  setInputValue(element, value, leaveField = true) {
+    element.focus();
+    const prototype = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    if (leaveField) element.blur();
+  }
+
+  // LinkedIn's inline error messages ("Please enter a valid answer")
+  getValidationErrors(modal) {
+    const messages = Array.from(modal.querySelectorAll(
+      '.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [role="alert"], [class*="error"]'))
+      .filter(el => this.isVisible(el))
+      .map(el => el.textContent.replace(/\s+/g, ' ').trim())
+      .filter(text => text && text.length < 200 &&
+                      /(please|required|enter|select|must|invalid|valid answer|make a selection)/i.test(text));
+    return [...new Set(messages)];
+  }
+
+  findFormButton(modal) {
+    const buttons = Array.from(modal.querySelectorAll('button')).filter(btn => this.isVisible(btn));
+    const label = btn => `${btn.getAttribute('aria-label') || ''} ${btn.textContent}`.toLowerCase();
+    return buttons.find(btn => label(btn).includes('submit')) ||
+           buttons.find(btn => label(btn).includes('review')) ||
+           buttons.find(btn => /continue|next/.test(label(btn))) ||
+           null;
+  }
+
+  // Record the questions that stopped this application and save it as a
+  // draft; the questions appear on the Application Answers page to answer once
+  async saveDraftForMissingAnswers(jobData, missing, errors) {
+    const questions = missing.filter(field => field.question).map(field => ({
+      key: AnswerBank.normalizeQuestion(field.question),
+      question: field.question,
+      type: field.type,
+      options: (field.options || []).slice(0, 25)
+    }));
+
+    if (questions.length) {
+      console.log('[Job Applicator] ⚠️ No saved answer for:', questions.map(q => q.question).join(' | '), '- saving as draft');
+      await chrome.runtime.sendMessage({
+        action: 'recordUnansweredQuestions',
+        questions,
+        job: { jobTitle: jobData.jobTitle, company: jobData.company }
       });
     } else {
-      console.log('[Job Applicator] ✅ All required fields are filled');
+      console.log('[Job Applicator] ⚠️ LinkedIn did not accept this page of the form:', errors.join(' | ') || 'no reason shown', '- saving as draft');
     }
 
-    return hasRequiredFields;
-  }
+    const notes = questions.length
+      ? `Unanswered: ${questions.map(q => q.question).join('; ')} (add answers on the Application Answers page)`
+      : `LinkedIn flagged: ${errors.join('; ') || 'a problem on the form'} - needs manual completion`;
 
-  async autoFillFields() {
-    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"]');
-    if (!modal) return;
-
-    // Auto-fill name
-    const nameField = modal.querySelector('input[name*="name"], input[id*="name"]');
-    if (nameField && !nameField.value && this.settings.autoFillName) {
-      nameField.value = this.settings.autoFillName;
-      nameField.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log('[Job Applicator] Auto-filled name');
-    }
-
-    // Auto-fill email
-    const emailField = modal.querySelector('input[type="email"], input[name*="email"]');
-    if (emailField && !emailField.value && this.settings.autoFillEmail) {
-      emailField.value = this.settings.autoFillEmail;
-      emailField.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log('[Job Applicator] Auto-filled email');
-    }
-
-    // Auto-fill phone
-    const phoneField = modal.querySelector('input[type="tel"], input[name*="phone"]');
-    if (phoneField && !phoneField.value && this.settings.autoFillPhone) {
-      phoneField.value = this.settings.autoFillPhone;
-      phoneField.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log('[Job Applicator] Auto-filled phone');
-    }
-
-    // Try to answer common yes/no questions automatically
-    this.autoAnswerCommonQuestions(modal);
-  }
-
-  autoAnswerCommonQuestions(modal) {
-    // Each rule only fires when the user has explicitly set the matching setting
-    const rules = [
-      {
-        name: 'UK work authorization',
-        matches: (text) => text.includes('legally') && text.includes('work') && text.includes('uk'),
-        answer: 'yes',
-        enabled: this.settings.ukWorkAuth === true
-      },
-      {
-        name: 'sponsorship',
-        matches: (text) => text.includes('sponsorship') || text.includes('visa'),
-        answer: 'no',
-        enabled: this.settings.needsSponsorship === false
-      },
-      {
-        name: 'criminal convictions',
-        matches: (text) => text.includes('criminal') && text.includes('conviction'),
-        answer: 'no',
-        enabled: this.settings.hasCriminalRecord === false
-      },
-      {
-        name: 'reasonable adjustments',
-        matches: (text) => text.includes('reasonable') && text.includes('adjustment'),
-        answer: 'no',
-        enabled: this.settings.needsAdjustments === false
+    await chrome.runtime.sendMessage({
+      action: 'saveJobApplication',
+      applicationData: {
+        ...jobData,
+        jobId: window.location.href,
+        jobUrl: window.location.href,
+        status: 'draft',
+        requiresCustomQuestions: true,
+        notes
       }
-    ];
-
-    for (const label of modal.querySelectorAll('label, legend')) {
-      const labelText = label.textContent.toLowerCase();
-
-      for (const rule of rules) {
-        if (!rule.matches(labelText)) continue;
-
-        console.log(`[Job Applicator] 🔍 Found ${rule.name} question`);
-        if (!rule.enabled) continue;
-
-        const group = label.closest('fieldset') || label.parentElement;
-        const radio = group && this.findRadioByAnswer(group, rule.answer);
-
-        if (radio && !radio.checked) {
-          radio.click();
-          console.log(`[Job Applicator] ✅ Auto-answered ${rule.name}: ${rule.answer}`);
-        }
-      }
-    }
-  }
-
-  // Find the radio whose label is exactly the answer ("Yes"/"No"). Substring
-  // matching picked options like "None" or "Not sure" for "no".
-  findRadioByAnswer(group, answer) {
-    return Array.from(group.querySelectorAll('input[type="radio"]')).find(radio => {
-      const radioLabel = (radio.id && group.querySelector(`label[for="${CSS.escape(radio.id)}"]`)) ||
-                         radio.closest('label') ||
-                         radio.nextElementSibling;
-      const text = (radioLabel?.textContent || radio.value || '').trim().toLowerCase();
-      return text === answer;
     });
+  }
+
+  // Close the form so the next job can be opened, keeping LinkedIn's copy of
+  // the unfinished application ("Save this application?" -> Save)
+  async closeEasyApplyModal() {
+    const modal = this.findEasyApplyModal();
+    if (!modal) return true;
+
+    const dismiss = Array.from(modal.querySelectorAll('button[aria-label="Dismiss"], button[data-test-modal-close-btn], .artdeco-modal__dismiss'))
+      .find(btn => this.isVisible(btn));
+    if (!dismiss) {
+      console.log('[Job Applicator] ⚠️ No close button on the application form');
+      return false;
+    }
+    dismiss.click();
+
+    const saveBtn = await this.waitFor(() => Array.from(document.querySelectorAll('[role="alertdialog"] button, [role="dialog"] button, .artdeco-modal button'))
+      .find(btn => this.isVisible(btn) && !btn.closest('#msg-overlay, [class*="msg-overlay"]') &&
+                   (btn.getAttribute('data-control-name') === 'save_application_btn' || /^save$/i.test(btn.textContent.trim()))), 4000);
+    if (saveBtn) {
+      saveBtn.click();
+      console.log('[Job Applicator] Saved the unfinished application on LinkedIn');
+    }
+
+    const closed = await this.waitFor(() => !this.findEasyApplyModal(), 4000);
+    if (!closed) console.log('[Job Applicator] ⚠️ Could not close the application form');
+    return !!closed;
   }
 
   async waitForDoneButton(maxAttempts = 10) {

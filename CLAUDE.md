@@ -39,7 +39,7 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/job-detector.js**: Analyzes DOM elements to identify job opportunities. Uses keyword matching, regex patterns, and confidence scoring (0.0-1.0) to rate opportunities. Extracts structured data from posts, profiles, and company updates.
 
-- **content/job-applicator.js**: Automated job application system using LinkedIn Easy Apply. Features flexible role matching (handles abbreviations like GRC, vCISO, ISO27001), pagination support, distance calculation for hybrid roles, auto-fill for common fields, smart detection of custom questions (saves as draft when needed), and auto-answers yes/no questions. Includes daily rate limiting (default 20/day) and human-like behavior simulation.
+- **content/job-applicator.js**: Automated job application system using LinkedIn Easy Apply. Features flexible role matching (handles abbreviations like GRC, vCISO, ISO27001), pagination support, distance calculation for hybrid roles, answers Easy Apply questions from the user's saved answers (see `shared/answer-bank.js`), and when a required question has no saved answer it records the question for the Application Answers page, saves the application as a draft and closes the form (keeping LinkedIn's saved copy). Includes daily rate limiting (default 20/day) and human-like behavior simulation.
 
 - **content/network-crawler.js**: Implements rate-limited profile visiting with human-like behavior (random delays, natural scrolling, simulated mouse events). Tracks daily limits in localStorage with automatic midnight reset.
 
@@ -56,6 +56,12 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 - **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics including salary ranges extracted from job details. Supports CSV export/import (import skips duplicates) and individual application deletion.
 
 - **backup-restore/backup.js**: Backup & Restore page (opened from the popup). Exports/imports settings as JSON for moving to another computer; imports never switch on scanning or automation. It is a separate page because extension popups can close when a file picker opens.
+
+- **answers/answers.js**: Application Answers page (opened from the popup). Edits `settings.answerBank`: right-to-work and working-arrangement yes/no answers, security clearance, years per skill, certifications, salary expectation, notice period, education, English level, links and the user's own question → answer rules. Lists "questions waiting for an answer" (recorded when an application is saved as a draft) so each can be answered once, and has a "Try a question" box.
+
+- **shared/answer-bank.js**: `AnswerBank.resolve(question, field, settings)` decides the answer to an Easy Apply question from the user's saved answers only (custom rules first, then built-in rules). A rule that recognises a question but has no saved answer returns nothing, so the application is saved as a draft instead of guessing. Shared by the job applicator and the answers page.
+
+- **shared/text-utils.js**: `TextUtils` shared by content scripts and pages: role matching (`matchTargetRole`), fuzzy name matching, headline → job title, industry guessing, and de-duplicating LinkedIn's repeated screen-reader text.
 
 - **shared/csv.js**: `CsvUtils` shared by the dashboards: CSV writing (with formula-injection guard), parsing (quoted cells, BOM, semicolon delimiters) and date parsing (ISO or UK DD/MM/YYYY as re-saved by Excel).
 
