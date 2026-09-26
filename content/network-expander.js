@@ -74,13 +74,15 @@ class NetworkExpander {
   }
 
   // Save connection request to analytics
-  async saveConnectionAnalytics(fullName, profileUrl, message) {
+  async saveConnectionAnalytics(fullName, profileUrl, message, extra = {}) {
     try {
       const requestData = {
         targetRole: this.currentTargetRole || 'Unknown',
         fullName: fullName,
         profileUrl: profileUrl || window.location.href,
-        messageTemplate: message ? message.substring(0, 100) : null
+        messageTemplate: message ? message.substring(0, 100) : null,
+        messageVariant: message ? extra.variant || null : null,
+        profileVisited: extra.visited === true
       };
 
       await chrome.runtime.sendMessage({
@@ -143,9 +145,55 @@ class NetworkExpander {
     return fitting[Math.floor(Math.random() * fitting.length)];
   }
 
+  // Today's invitation limit: the warm-up limit while the account is warming
+  // up (see shared/safety.js), otherwise the user's daily limit
+  maxInvitesToday() {
+    return this.inviteAllowance?.limit || this.settings.maxDailyInvites || 30;
+  }
+
+  async refreshInviteAllowance() {
+    try {
+      const allowance = await chrome.runtime.sendMessage({ action: 'getInviteAllowance' });
+      if (allowance && !allowance.error) this.inviteAllowance = allowance;
+      if (this.inviteAllowance?.warming) {
+        console.log(`[Network Expander] 🌱 Warm-up day ${this.inviteAllowance.day + 1} of ${Safety.WARM_UP_DAYS}: ` +
+                    `${this.inviteAllowance.limit} invitations today (full limit ${this.inviteAllowance.max})`);
+      }
+    } catch (error) {
+      console.error('[Network Expander] Could not read the warm-up limit:', error);
+    }
+  }
+
+  // People not to invite: the do-not-contact list, and anyone already invited
+  // before (e.g. an invitation that was withdrawn)
+  async loadContactFilters() {
+    this.doNotContact = Array.isArray(this.settings.doNotContact) ? this.settings.doNotContact : [];
+    this.invitedBefore = { slugs: new Set(), names: new Set() };
+    try {
+      const { analytics } = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
+      for (const request of analytics?.requests || []) {
+        const slug = Safety.profileSlug(request.profileUrl);
+        if (slug) this.invitedBefore.slugs.add(slug);
+        else if (request.fullName && request.fullName !== 'Unknown') this.invitedBefore.names.add(Safety.normalize(request.fullName));
+      }
+    } catch (error) {
+      console.error('[Network Expander] Could not load previous invitations:', error);
+    }
+  }
+
+  // Why this person should be skipped, or null to go ahead
+  skipReason(person) {
+    const blocked = Safety.blockedBy(this.doNotContact || [], person);
+    if (blocked) return `on your do-not-contact list ("${blocked}")`;
+    const slug = Safety.profileSlug(person.profileUrl);
+    if (slug && this.invitedBefore?.slugs.has(slug)) return 'invited before';
+    if (person.fullName && this.invitedBefore?.names.has(Safety.normalize(person.fullName))) return 'invited before';
+    return null;
+  }
+
   // Check if we've reached daily limits
   hasReachedDailyLimit() {
-    const maxInvites = this.settings.maxDailyInvites || 30; // Conservative default
+    const maxInvites = this.maxInvitesToday();
     const maxProfileViews = this.settings.maxDailyProfileViews || 60;
 
     return this.dailyLimits.invitesSent >= maxInvites ||
@@ -303,46 +351,99 @@ class NetworkExpander {
     }
   }
 
+  // Who a Connect control on a search results card is for
+  describePerson(connectBtn) {
+    const listItem = connectBtn.closest('li, [role="listitem"], [data-view-name*="search-entity"]');
+    let title = '';
+    let company = '';
+    let profileUrl = null;
+
+    if (listItem) {
+      const titleElem = listItem.querySelector('[class*="entity-result__primary-subtitle"]');
+      title = titleElem ? titleElem.textContent.trim() : '';
+
+      const companyElem = listItem.querySelector('[class*="entity-result__secondary-subtitle"]');
+      company = companyElem ? companyElem.textContent.trim() : '';
+
+      const profileLink = listItem.querySelector('a[href*="/in/"]');
+      profileUrl = profileLink ? profileLink.href.split('?')[0] : null;
+    }
+
+    // Extract name from aria-label, falling back to the card's name element
+    const ariaLabel = connectBtn.getAttribute('aria-label') || '';
+    const match = ariaLabel.match(/Invite (.+?) to connect/);
+    const nameElem = listItem?.querySelector('[data-anonymize="person-name"], a[href*="/in/"] span[aria-hidden="true"]');
+    const fullName = (match ? match[1] : nameElem?.textContent || '').trim();
+    // Greet by first name when known; analytics records 'Unknown' otherwise
+    // (a placeholder like "there" would later fuzzy-match unrelated page text)
+    const firstName = fullName ? fullName.split(' ')[0] : 'there';
+
+    // The newer search page has no headline class names; fall back to the searched role
+    let industry = TextUtils.guessIndustry(title, company);
+    if (industry === 'the field' && this.currentTargetRole) {
+      industry = TextUtils.guessIndustry(this.currentTargetRole);
+    }
+    const role = TextUtils.shortRole(title) || this.currentTargetRole || '';
+    const text = (listItem?.textContent || `${title} ${company}`).replace(/\s+/g, ' ').trim();
+
+    return { fullName, firstName, title, company, industry, role, profileUrl, text };
+  }
+
+  // View the person's profile in a background tab first, as someone
+  // considering an invitation would; they see the visit, which tends to help
+  // acceptance. Returns true if the profile was visited.
+  async visitProfile(person) {
+    if (this.settings.visitProfileFirst === false || !person.profileUrl) return false;
+    const maxViews = this.settings.maxDailyProfileViews || 60;
+    if (this.dailyLimits.profilesViewed >= maxViews) return false;
+
+    const opened = await chrome.runtime.sendMessage({ action: 'openProfileVisit', url: person.profileUrl });
+    if (!opened || opened.error || !opened.tabId) {
+      console.log('[Network Expander] ⚠️ Could not open the profile to visit it:', opened?.error || 'no tab');
+      return false;
+    }
+
+    console.log('[Network Expander] 👀 Viewing profile of', person.fullName || person.profileUrl);
+    this.dailyLimits.profilesViewed = (this.dailyLimits.profilesViewed || 0) + 1;
+    this.saveDailyLimits();
+    await this.humanDelay(8000, 15000);
+    await chrome.runtime.sendMessage({ action: 'closeProfileVisit', tabId: opened.tabId });
+    // Back on the search page, a moment before deciding to connect
+    await this.humanDelay(1500, 3500);
+    return true;
+  }
+
+  // The note for this person: the A/B test wording if one is set up,
+  // otherwise one of the built-in wordings. Returns { message, variant }.
+  composeNote(profileInfo, maxLength) {
+    const variant = Safety.chooseVariant(this.settings);
+    if (variant) {
+      const test = Safety.messageTest(this.settings);
+      const template = variant === 'A' ? test.a : test.b;
+      return { message: Safety.fillMessage(template, profileInfo, maxLength), variant };
+    }
+    return { message: this.generatePersonalizedMessage(profileInfo, maxLength), variant: null };
+  }
+
   // Send connection request using the button element directly
-  async sendConnectionRequestByButton(connectBtn, withMessage = true) {
+  async sendConnectionRequestByButton(connectBtn, withMessage = true, person = this.describePerson(connectBtn)) {
     try {
-      // Try to find the profile container to get more info
-      const listItem = connectBtn.closest('li, [role="listitem"], [data-view-name*="search-entity"]');
-      let title = '';
-      let company = '';
-      let profileUrl = null;
-
-      if (listItem) {
-        const titleElem = listItem.querySelector('[class*="entity-result__primary-subtitle"]');
-        title = titleElem ? titleElem.textContent.trim() : '';
-
-        const companyElem = listItem.querySelector('[class*="entity-result__secondary-subtitle"]');
-        company = companyElem ? companyElem.textContent.trim() : '';
-
-        const profileLink = listItem.querySelector('a[href*="/in/"]');
-        profileUrl = profileLink ? profileLink.href.split('?')[0] : null;
-      }
-
-      // Extract name from aria-label, falling back to the card's name element
-      const ariaLabel = connectBtn.getAttribute('aria-label') || '';
-      const match = ariaLabel.match(/Invite (.+?) to connect/);
-      const nameElem = listItem?.querySelector('[data-anonymize="person-name"], a[href*="/in/"] span[aria-hidden="true"]');
-      const fullName = (match ? match[1] : nameElem?.textContent || '').trim();
-      // Greet by first name when known; analytics records 'Unknown' otherwise
-      // (a placeholder like "there" would later fuzzy-match unrelated page text)
-      const firstName = fullName ? fullName.split(' ')[0] : 'there';
+      const { fullName, profileUrl } = person;
       const displayName = fullName || '(unknown name)';
+      const profileInfo = person;
 
       console.log('[Network Expander] Preparing to connect with:', displayName);
+      console.log('[Network Expander] Profile info:', { fullName, title: person.title, company: person.company, industry: person.industry });
 
-      // The newer search page has no headline class names; fall back to the searched role
-      let industry = TextUtils.guessIndustry(title, company);
-      if (industry === 'the field' && this.currentTargetRole) {
-        industry = TextUtils.guessIndustry(this.currentTargetRole);
+      const visited = await this.visitProfile(person);
+      if (!this.isRunning) {
+        console.log('[Network Expander] Stopped while viewing the profile');
+        return false;
       }
-      const profileInfo = { fullName, firstName, title, company, industry };
-
-      console.log('[Network Expander] Profile info:', profileInfo);
+      if (!document.contains(connectBtn) || !this.isVisible(connectBtn)) {
+        console.log('[Network Expander] ⚠️ The Connect button is no longer on the page - skipping', displayName);
+        return false;
+      }
 
       // Click connect and wait for the invitation pop-up to render
       connectBtn.click();
@@ -355,7 +456,7 @@ class NetworkExpander {
           console.log('[Network Expander] ✅ Sent request (no pop-up shown) to:', displayName);
           this.dailyLimits.invitesSent++;
           this.saveDailyLimits();
-          await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, null);
+          await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, null, { visited });
           return true;
         }
 
@@ -374,6 +475,7 @@ class NetworkExpander {
       await this.humanDelay(800, 1800);
 
       let message = null;
+      let variant = null;
 
       // Treat a missing setting as "on", matching the checkbox default in the popup
       if (withMessage && this.settings.usePersonalizedMessages !== false) {
@@ -385,7 +487,8 @@ class NetworkExpander {
 
           if (messageBox) {
             const maxLength = messageBox.maxLength > 0 ? messageBox.maxLength : 300;
-            message = this.generatePersonalizedMessage(profileInfo, maxLength);
+            ({ message, variant } = this.composeNote(profileInfo, maxLength));
+            if (variant) console.log(`[Network Expander] Using test wording ${variant}`);
 
             await this.humanDelay(500, 1200);
             console.log('[Network Expander] ✍️ Typing note to', displayName);
@@ -417,6 +520,7 @@ class NetworkExpander {
         // rather than leaving the pop-up open
         console.log('[Network Expander] ⚠️ Send stayed disabled after typing the note - trying without a note');
         message = null;
+        variant = null;
         sendBtn = this.findSendButton(dialog, false);
         if (sendBtn?.disabled) sendBtn = null;
       }
@@ -452,7 +556,7 @@ class NetworkExpander {
       this.saveDailyLimits();
 
       // Save to analytics
-      await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, message);
+      await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, message, { variant, visited });
 
       return true;
 
@@ -503,6 +607,7 @@ class NetworkExpander {
     // Reload settings to ensure we have latest values
     this.settings = await this.storage.getSettings();
     console.log('[Network Expander] Settings loaded:', this.settings);
+    await this.refreshInviteAllowance();
 
     if (this.isRunning) {
       console.log('[Network Expander] Already running');
@@ -607,11 +712,19 @@ class NetworkExpander {
       // Shuffle buttons to randomize selection order
       const shuffledButtons = this.shuffleArray([...connectButtons]);
       console.log('[Network Expander] Randomized button order for more natural behavior');
+      await this.loadContactFilters();
 
       let connected = 0;
       for (const button of shuffledButtons) {
-        if (connected >= maxConnections || this.hasReachedDailyLimit()) {
+        if (connected >= maxConnections || this.hasReachedDailyLimit() || !this.isRunning) {
           break;
+        }
+
+        const person = this.describePerson(button);
+        const skip = this.skipReason(person);
+        if (skip) {
+          console.log(`[Network Expander] Skipping ${person.fullName || 'profile'}: ${skip}`);
+          continue;
         }
 
         // Random chance to skip (makes it less robotic)
@@ -620,7 +733,7 @@ class NetworkExpander {
           continue;
         }
 
-        const success = await this.sendConnectionRequestByButton(button, true);
+        const success = await this.sendConnectionRequestByButton(button, true, person);
         if (success) {
           connected++;
         }
@@ -676,6 +789,7 @@ class NetworkExpander {
 
         // Restore current target role for analytics tracking
         this.currentTargetRole = task.targetRole;
+        await this.refreshInviteAllowance();
 
         // If this was an automated task, process the page then continue
         if (task.automated) {
@@ -793,6 +907,7 @@ class NetworkExpander {
       // Shuffle buttons to randomize selection order
       const shuffledButtons = this.shuffleArray([...connectButtons]);
       console.log('[Network Expander] Randomized button order for more natural behavior');
+      await this.loadContactFilters();
 
       let connectedThisPage = 0;
       for (const button of shuffledButtons) {
@@ -802,13 +917,20 @@ class NetworkExpander {
           break;
         }
 
+        const person = this.describePerson(button);
+        const skip = this.skipReason(person);
+        if (skip) {
+          console.log(`[Network Expander] Skipping ${person.fullName || 'profile'}: ${skip}`);
+          continue;
+        }
+
         // Random chance to skip (makes it less robotic)
         if (Math.random() < 0.3) {
           console.log('[Network Expander] Randomly skipping profile (more human-like)');
           continue;
         }
 
-        const success = await this.sendConnectionRequestByButton(button, true);
+        const success = await this.sendConnectionRequestByButton(button, true, person);
         if (success) {
           connectedThisPage++;
           const totalConnected = connectionsAlreadySent + connectedThisPage;
@@ -863,7 +985,7 @@ class NetworkExpander {
   async runAutomatedExpansion(rolesWithoutInvites = 0) {
     this.isRunning = true;
     const connectionsPerRole = this.settings.connectionsPerRole || 3;
-    const maxDaily = this.settings.maxDailyInvites || 30;
+    const maxDaily = this.maxInvitesToday();
     const roleCount = Math.max(1, (this.settings.targetRoles || []).length);
 
     if (rolesWithoutInvites >= roleCount) {
@@ -926,7 +1048,8 @@ class NetworkExpander {
     return {
       isRunning: this.isRunning,
       dailyLimits: this.dailyLimits,
-      remainingInvites: Math.max(0, (this.settings.maxDailyInvites || 30) - this.dailyLimits.invitesSent)
+      inviteLimit: this.maxInvitesToday(),
+      remainingInvites: Math.max(0, this.maxInvitesToday() - this.dailyLimits.invitesSent)
     };
   }
 }

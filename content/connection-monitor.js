@@ -9,6 +9,9 @@ class ConnectionMonitor {
   }
 
   async init() {
+    // Withdrawing old invitations also works on the sent page; don't navigate away from it
+    if (window.InviteWithdrawer?.hasPendingTask()) return;
+
     // Check if we're on the sent invitations page
     if (window.location.href.includes('/mynetwork/invitation-manager/sent/')) {
       console.log('[Connection Monitor] On sent invitations page, checking status...');

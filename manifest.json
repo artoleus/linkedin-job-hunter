@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobTrail - Job Search Assistant",
-  "version": "1.4",
+  "version": "1.5",
   "description": "Organise your job search: track applications, remember your answers to application questions, and follow up with your network. Not affiliated with LinkedIn.",
   "permissions": [
     "storage",
@@ -21,8 +21,10 @@
       "js": [
         "storage/storage.js",
         "shared/terms.js",
+        "shared/safety.js",
         "shared/text-utils.js",
         "shared/answer-bank.js",
+        "shared/pipeline.js",
         "shared/uk-places.js",
         "content/job-detector.js",
         "content/network-crawler.js",
@@ -30,6 +32,7 @@
         "content/connection-monitor.js",
         "content/job-applicator.js",
         "content/welcome-messenger.js",
+        "content/invite-withdrawer.js",
         "content/linkedin.js"
       ],
       "run_at": "document_end"

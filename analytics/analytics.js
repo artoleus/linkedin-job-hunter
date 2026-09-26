@@ -78,6 +78,31 @@ class AnalyticsDashboard {
     // Welcome message waiting time
     document.getElementById('welcomeDelayDays').addEventListener('change', (e) => this.saveWelcomeDelay(e.target.value));
 
+    // Message test
+    this.populateMessageTest();
+    document.getElementById('saveTestBtn').addEventListener('click', () => this.saveMessageTest());
+    for (const id of ['testA', 'testB']) {
+      document.getElementById(id).addEventListener('input', () => {
+        this.testEdited = true;
+        this.updateCharCounts();
+        document.getElementById('testStatus').textContent = 'Not saved yet';
+        document.getElementById('testStatus').className = '';
+      });
+    }
+    document.querySelectorAll('input[name="testMode"]').forEach(radio =>
+      radio.addEventListener('change', () => { this.testEdited = true; }));
+
+    // "Don't contact" on a row adds the person to the do-not-contact list
+    document.getElementById('requestsTableBody').addEventListener('click', async (e) => {
+      const button = e.target.closest('.block-btn');
+      if (!button || button.disabled) return;
+      const req = this.analytics.requests.find(r => r.id === button.dataset.requestId);
+      if (!req) return;
+      if (!confirm(`Never send ${req.fullName} a connection request or welcome message again?`)) return;
+      button.disabled = true;
+      await chrome.runtime.sendMessage({ action: 'addDoNotContact', entry: this.contactEntry(req) });
+    });
+
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', async () => {
       await this.loadData();
@@ -179,6 +204,7 @@ class AnalyticsDashboard {
   render() {
     this.renderStats();
     this.renderWelcomeMessages();
+    this.renderMessageTest();
     this.renderCharts();
     this.renderTable();
     this.populateRoleFilter();
@@ -196,7 +222,7 @@ class AnalyticsDashboard {
       .filter(box => box === document.activeElement || box.dataset.edited === 'true')
       .map(box => [box.dataset.requestId, box.value]));
 
-    const candidates = requests.filter(req => WelcomeMessages.isCandidate(req));
+    const candidates = requests.filter(req => WelcomeMessages.isCandidate(req, this.settings));
     const ready = candidates
       .filter(req => WelcomeMessages.isReady(req, this.settings, now) || req.welcomeStatus === 'sending' || req.welcomeStatus === 'failed')
       .sort((a, b) => WelcomeMessages.readyAt(a, this.settings) - WelcomeMessages.readyAt(b, this.settings));
@@ -308,6 +334,8 @@ class AnalyticsDashboard {
     document.getElementById('totalAccepted').textContent = stats.totalAccepted || 0;
     document.getElementById('totalPending').textContent = stats.totalPending || 0;
     document.getElementById('totalDeclined').textContent = stats.totalDeclined || 0;
+    document.getElementById('totalWithdrawn').textContent =
+      stats.totalWithdrawn ?? this.analytics.requests.filter(r => r.status === 'withdrawn').length;
 
     const acceptanceRate = stats.acceptanceRate || 0;
     document.getElementById('acceptanceRate').textContent =
@@ -507,17 +535,19 @@ class AnalyticsDashboard {
     this.charts.statusChart = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: ['Accepted', 'Pending', 'Declined'],
+        labels: ['Accepted', 'Pending', 'Declined', 'Withdrawn'],
         datasets: [{
           data: [
             stats.totalAccepted || 0,
             stats.totalPending || 0,
-            stats.totalDeclined || 0
+            stats.totalDeclined || 0,
+            stats.totalWithdrawn || 0
           ],
           backgroundColor: [
             '#00a000',
             '#ff9800',
-            '#d93025'
+            '#d93025',
+            '#9ca3af'
           ]
         }]
       },
@@ -537,7 +567,7 @@ class AnalyticsDashboard {
     const tbody = document.getElementById('requestsTableBody');
 
     if (this.filteredRequests.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="no-data">No requests found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="no-data">No requests found</td></tr>';
       return;
     }
 
@@ -546,8 +576,10 @@ class AnalyticsDashboard {
       new Date(b.sentDate) - new Date(a.sentDate)
     );
 
+    const doNotContact = this.settings.doNotContact || [];
     tbody.innerHTML = sorted.map(req => {
       const sentDate = new Date(req.sentDate);
+      const blocked = Safety.blockedBy(doNotContact, { fullName: req.fullName, profileUrl: req.profileUrl });
       const responseTime = req.responseDate ?
         this.formatResponseTime(new Date(req.sentDate), new Date(req.responseDate)) :
         '--';
@@ -561,6 +593,9 @@ class AnalyticsDashboard {
           <td>${responseTime}</td>
           <td>${this.formatTimeOfDay(req.timeOfDay)}</td>
           <td>${this.escapeHtml(this.welcomeLabel(req))}</td>
+          <td>${req.fullName && req.fullName !== 'Unknown'
+            ? `<button class="block-btn" data-request-id="${this.escapeHtml(req.id)}" ${blocked ? 'disabled title="On your do-not-contact list"' : 'title="Never contact this person again"'}>${blocked ? '🚫 Not contacted' : '🚫 Don\'t contact'}</button>`
+            : ''}</td>
         </tr>
       `;
     }).join('');
@@ -598,7 +633,7 @@ class AnalyticsDashboard {
 
   exportToCSV() {
     const headers = ['Name', 'Role', 'Sent Date', 'Status', 'Response Date', 'Response Time (hours)', 'Time of Day', 'Profile URL', 'Message',
-                     'Welcome', 'Welcome Sent'];
+                     'Welcome', 'Welcome Sent', 'Message Test'];
     const rows = this.filteredRequests.map(req => [
       req.fullName,
       req.targetRole,
@@ -610,7 +645,8 @@ class AnalyticsDashboard {
       req.profileUrl || '',
       req.messageTemplate || '',
       ['sent', 'skipped'].includes(req.welcomeStatus) ? req.welcomeStatus : '',
-      req.welcomeSentAt || ''
+      req.welcomeSentAt || '',
+      req.messageVariant || ''
     ]);
 
     CsvUtils.download(CsvUtils.toCsv([headers, ...rows]),
@@ -645,7 +681,8 @@ class AnalyticsDashboard {
         profileUrl: CsvUtils.column(row, 'profile url'),
         messageTemplate: CsvUtils.column(row, 'message'),
         welcomeStatus: CsvUtils.column(row, 'welcome').toLowerCase(),
-        welcomeSentAt: CsvUtils.column(row, 'welcome sent')
+        welcomeSentAt: CsvUtils.column(row, 'welcome sent'),
+        messageVariant: CsvUtils.column(row, 'message test').toUpperCase()
       });
     }
 
@@ -673,6 +710,102 @@ class AnalyticsDashboard {
       invalid ? `${invalid} row(s) had no name or date` : ''
     ].filter(Boolean).join(', ');
     alert(`Imported ${result.added} connection request(s)` + (notes ? ` (${notes}).` : '.'));
+  }
+
+  // ---- Message test -------------------------------------------------------------
+
+  // Suggestions to start from when no wordings are saved yet
+  static SAMPLE_WORDINGS = {
+    a: 'Hi {first}, I\'m exploring my next move in {field} and would value connecting with people in {role} roles. Would be great to connect.',
+    b: 'Hi {first}, your work as {role} caught my eye. I\'m looking for new opportunities in {field} and would love to connect.'
+  };
+
+  populateMessageTest() {
+    const test = Safety.messageTest(this.settings);
+    document.getElementById('testA').value = test.a || AnalyticsDashboard.SAMPLE_WORDINGS.a;
+    document.getElementById('testB').value = test.b || AnalyticsDashboard.SAMPLE_WORDINGS.b;
+    const radio = document.querySelector(`input[name="testMode"][value="${test.mode}"]`);
+    if (radio) radio.checked = true;
+    this.testEdited = false;
+    this.updateCharCounts();
+    if (location.hash === '#messageTest') document.getElementById('messageTest').scrollIntoView();
+  }
+
+  updateCharCounts() {
+    // Length with typical values filled in
+    const sample = { firstName: 'Alexandra', role: 'Information Security Manager', industry: 'cyber security' };
+    for (const [id, countId] of [['testA', 'testACount'], ['testB', 'testBCount']]) {
+      const filled = Safety.fillMessage(document.getElementById(id).value, sample, 10000);
+      const count = document.getElementById(countId);
+      count.textContent = `About ${filled.length} characters once filled in` +
+        (filled.length > 300 ? ' - too long, LinkedIn allows 300' : filled.length > 200 ? ' - may be cut on free accounts (200)' : '');
+      count.className = 'char-count' + (filled.length > 300 ? ' over' : filled.length > 200 ? ' warn' : '');
+    }
+  }
+
+  async saveMessageTest(modeOverride) {
+    const status = document.getElementById('testStatus');
+    const mode = modeOverride || document.querySelector('input[name="testMode"]:checked')?.value || 'off';
+    const a = document.getElementById('testA').value.trim();
+    const b = document.getElementById('testB').value.trim();
+
+    const problem = (mode === 'test' && (!a || !b)) ? 'Write both wordings to run a test'
+      : (mode === 'A' && !a) ? 'Wording A is empty'
+      : (mode === 'B' && !b) ? 'Wording B is empty'
+      : [a, b].some(t => t.length > 600) ? 'Keep each wording under 300 characters'
+      : null;
+    if (problem) {
+      status.textContent = problem;
+      status.className = 'error';
+      return;
+    }
+
+    const { settings } = await chrome.runtime.sendMessage({ action: 'getSettings' });
+    await chrome.runtime.sendMessage({ action: 'updateSettings', settings: { ...settings, messageTest: { mode, a, b } } });
+    this.testEdited = false;
+    status.textContent = mode === 'test' ? 'Saved ✓ The next invitations will use A or B at random.'
+      : mode === 'off' ? 'Saved ✓ Invitations use the built-in wordings.'
+      : `Saved ✓ Invitations will use wording ${mode}.`;
+    status.className = 'saved';
+    if (settings.usePersonalizedMessages === false && mode !== 'off') {
+      status.textContent += ' Note: "Use Personalized Messages" is off in Settings, so no notes are sent.';
+    }
+  }
+
+  renderMessageTest() {
+    // Pick up changes saved elsewhere unless something is being edited here
+    if (!this.testEdited) {
+      const test = Safety.messageTest(this.settings);
+      const radio = document.querySelector(`input[name="testMode"][value="${test.mode}"]`);
+      if (radio) radio.checked = true;
+    }
+
+    const results = Safety.messageTestResults(this.analytics.requests);
+    const table = document.getElementById('testResults');
+    const hasData = results.A.sent + results.B.sent > 0;
+    table.innerHTML = hasData ? `<tr><th>Wording</th><th>Sent</th><th>Accepted</th><th>Acceptance rate</th></tr>` +
+      ['A', 'B'].map(v => `<tr class="${results.winner === v ? 'winner' : ''}"><td>${v}${results.winner === v ? ' 🏆' : ''}</td>` +
+        `<td>${results[v].sent}</td><td>${results[v].accepted}</td><td>${Math.round(results[v].rate * 100)}%</td></tr>`).join('') : '';
+    document.getElementById('testVerdict').textContent = hasData ? results.verdict : 'No invitations sent with a test wording yet.';
+
+    const winnerBox = document.getElementById('testWinner');
+    winnerBox.innerHTML = '';
+    if (results.winner && Safety.messageTest(this.settings).mode === 'test') {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary small';
+      btn.textContent = `Use wording ${results.winner} from now on`;
+      btn.addEventListener('click', async () => {
+        document.querySelector(`input[name="testMode"][value="${results.winner}"]`).checked = true;
+        await this.saveMessageTest(results.winner);
+      });
+      winnerBox.appendChild(btn);
+    }
+  }
+
+  // What to add to the do-not-contact list for a person: their profile link
+  // if known, otherwise their name
+  contactEntry(req) {
+    return Safety.profileSlug(req.profileUrl) ? req.profileUrl.split('?')[0] : req.fullName;
   }
 
   welcomeLabel(req) {

@@ -615,36 +615,9 @@ class JobApplicator {
         console.log('[Job Applicator] 💰 Updated salary from job details:', detailedSalary);
       }
 
-      // Debug: Log all buttons on the page
-      const allButtons = document.querySelectorAll('button');
-      console.log('[Job Applicator] 🔍 Found', allButtons.length, 'buttons on page');
-
-      // Try multiple selectors to find Easy Apply button
-      let easyApplyBtn = document.querySelector('#jobs-apply-button-id');
-      console.log('[Job Applicator] Checking #jobs-apply-button-id:', !!easyApplyBtn);
-
+      const easyApplyBtn = this.findEasyApplyButton();
       if (!easyApplyBtn) {
-        easyApplyBtn = document.querySelector('.jobs-apply-button--top-card');
-        console.log('[Job Applicator] Checking .jobs-apply-button--top-card:', !!easyApplyBtn);
-      }
-
-      if (!easyApplyBtn) {
-        easyApplyBtn = document.querySelector('button[aria-label*="Easy Apply"]');
-        console.log('[Job Applicator] Checking button[aria-label*="Easy Apply"]:', !!easyApplyBtn);
-      }
-
-      if (!easyApplyBtn) {
-        // Look for any button with "Easy Apply" text
-        for (const button of allButtons) {
-          if (button.textContent.includes('Easy Apply')) {
-            easyApplyBtn = button;
-            console.log('[Job Applicator] ✅ Found Easy Apply button by text content');
-            break;
-          }
-        }
-      }
-
-      if (!easyApplyBtn) {
+        const allButtons = document.querySelectorAll('button');
         console.log('[Job Applicator] ❌ Easy Apply button not found with any selector');
         console.log('[Job Applicator] Sample button texts:', Array.from(allButtons).slice(0, 10).map(b => b.textContent.trim()).filter(t => t));
         return false;
@@ -678,7 +651,8 @@ class JobApplicator {
             jobUrl: window.location.href,
             status: 'draft',
             requiresCoverLetter: true,
-            notes: 'Requires cover letter - needs manual completion'
+            notes: 'Requires cover letter - needs manual completion',
+            pendingQuestions: this.toQuestions([{ question: 'Cover letter', type: 'textarea', options: [] }])
           }
         });
 
@@ -716,6 +690,129 @@ class JobApplicator {
       console.error('[Job Applicator] Error applying to job:', error);
       return false;
     }
+  }
+
+  // The job's Easy Apply button (it reads "Continue applying" or similar for
+  // a saved application on some layouts)
+  findEasyApplyButton() {
+    const candidates = [
+      document.querySelector('#jobs-apply-button-id'),
+      document.querySelector('.jobs-apply-button--top-card button, button.jobs-apply-button--top-card'),
+      document.querySelector('button[aria-label*="Easy Apply"]'),
+      Array.from(document.querySelectorAll('button')).find(button =>
+        /easy apply|continue appl/i.test(button.textContent) && !button.closest('.job-card-container'))
+    ];
+    return candidates.find(button => button && this.isVisible(button) && !button.disabled) || null;
+  }
+
+  // Signs on the job page that you've already applied
+  alreadyApplied() {
+    // The top card only: a job description could mention applications
+    const top = document.querySelector('.jobs-unified-top-card, .job-details-jobs-unified-top-card, .jobs-details-top-card') ||
+                document.querySelector('.jobs-details, main');
+    const text = (top || document.body).textContent.replace(/\s+/g, ' ');
+    return /\bapplied\s+(\d+|an?)\s+\w+\s+ago\b|application (submitted|sent)|\bsee application\b/i.test(text) ||
+           Array.from((top || document).querySelectorAll('span, div')).some(el => el.children.length === 0 && /^applied$/i.test(el.textContent.trim()));
+  }
+
+  // Try a saved draft again now that more answers are saved. Runs in the tab
+  // the Applications page opened on the job's page; reports the outcome to
+  // the background, which moves the tab on to the next draft.
+  async completeDraft(task) {
+    console.log(`[Job Applicator] 📝 Completing draft ${task.position}/${task.total}: ${task.jobTitle} at ${task.company}`);
+    await this.init();
+
+    let result;
+    if (this.hasReachedDailyLimit()) {
+      result = { outcome: 'stopped', detail: 'Daily application limit reached' };
+    } else {
+      this.isRunning = true;
+      this.completingDraftId = task.id;
+      try {
+        result = await this.completeDraftOnPage(task);
+      } catch (error) {
+        console.error('[Job Applicator] Error completing draft:', error);
+        result = { outcome: 'failed', detail: error.message };
+      } finally {
+        this.isRunning = false;
+        this.completingDraftId = null;
+      }
+    }
+
+    console.log('[Job Applicator] Draft result:', result);
+    const { next } = await chrome.runtime.sendMessage({ action: 'draftCompletionResult', result }) || {};
+    if (next) {
+      await this.humanDelay(5000, 10000);
+      location.href = next;
+    }
+  }
+
+  async completeDraftOnPage(task) {
+    const jobData = { jobTitle: task.jobTitle, company: task.company };
+    await this.humanDelay(2000, 4000);
+    const button = await this.waitFor(() => this.findEasyApplyButton() || (this.alreadyApplied() && 'applied'), 15000);
+
+    if (!button) return { outcome: 'failed', detail: 'No Easy Apply button on the job page (it may have closed)' };
+    if (button === 'applied') {
+      await this.reportDraftApplied(jobData);
+      return { outcome: 'applied', detail: 'Already applied on LinkedIn' };
+    }
+
+    const salary = this.extractSalaryFromJobDetails();
+    if (salary) jobData.salary = salary;
+
+    if (this.findEasyApplyModal() && !await this.closeEasyApplyModal()) {
+      return { outcome: 'failed', detail: 'An application form was already open and could not be closed' };
+    }
+    button.click();
+    await this.waitFor(() => this.findEasyApplyModal(), 8000);
+    await this.humanDelay(1000, 2000);
+
+    if (this.detectCoverLetterRequirement()) {
+      await this.saveDraftUpdate(jobData, [{ question: 'Cover letter', type: 'textarea', options: [] }],
+        'Requires cover letter - needs manual completion', true);
+      await this.closeEasyApplyModal();
+      return { outcome: 'draft', detail: 'Needs a cover letter' };
+    }
+
+    if (await this.fillAndSubmitApplication(jobData)) {
+      await this.reportDraftApplied(jobData);
+      this.dailyLimits.applicationsSubmitted++;
+      this.saveDailyLimits();
+      return { outcome: 'applied' };
+    }
+    return { outcome: 'draft', detail: 'Still has questions without a saved answer' };
+  }
+
+  async reportDraftApplied(jobData) {
+    await chrome.runtime.sendMessage({
+      action: 'saveJobApplication',
+      applicationData: { ...jobData, updateId: this.completingDraftId, status: 'applied' }
+    });
+  }
+
+  // Keep the draft, with the questions that still stopped it
+  async saveDraftUpdate(jobData, fields, notes, requiresCoverLetter = false) {
+    await chrome.runtime.sendMessage({
+      action: 'saveJobApplication',
+      applicationData: {
+        ...jobData,
+        updateId: this.completingDraftId,
+        status: 'draft',
+        notes,
+        requiresCoverLetter,
+        pendingQuestions: this.toQuestions(fields)
+      }
+    });
+  }
+
+  toQuestions(fields) {
+    return fields.filter(field => field.question).map(field => ({
+      key: AnswerBank.normalizeQuestion(field.question),
+      question: field.question,
+      type: field.type,
+      options: (field.options || []).slice(0, 25)
+    }));
   }
 
   // Poll until check() returns something truthy, or give up after timeoutMs
@@ -1042,12 +1139,7 @@ class JobApplicator {
   // Record the questions that stopped this application and save it as a
   // draft; the questions appear on the Application Answers page to answer once
   async saveDraftForMissingAnswers(jobData, missing, errors) {
-    const questions = missing.filter(field => field.question).map(field => ({
-      key: AnswerBank.normalizeQuestion(field.question),
-      question: field.question,
-      type: field.type,
-      options: (field.options || []).slice(0, 25)
-    }));
+    const questions = this.toQuestions(missing);
 
     if (questions.length) {
       console.log('[Job Applicator] ⚠️ No saved answer for:', questions.map(q => q.question).join(' | '), '- saving as draft');
@@ -1064,6 +1156,11 @@ class JobApplicator {
       ? `Unanswered: ${questions.map(q => q.question).join('; ')} (add answers on the Application Answers page)`
       : `LinkedIn flagged: ${errors.join('; ') || 'a problem on the form'} - needs manual completion`;
 
+    if (this.completingDraftId) {
+      await this.saveDraftUpdate(jobData, missing, notes);
+      return;
+    }
+
     await chrome.runtime.sendMessage({
       action: 'saveJobApplication',
       applicationData: {
@@ -1072,7 +1169,8 @@ class JobApplicator {
         jobUrl: window.location.href,
         status: 'draft',
         requiresCustomQuestions: true,
-        notes
+        notes,
+        pendingQuestions: questions
       }
     });
   }

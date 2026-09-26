@@ -26,11 +26,12 @@ const WelcomeMessages = {
     return name.length >= 3 && name !== 'unknown' && name !== 'there';
   },
 
-  // Accepted, not yet welcomed or skipped
-  isCandidate(request) {
+  // Accepted, not yet welcomed or skipped, and not on the do-not-contact list
+  isCandidate(request, settings = {}) {
     return request.status === 'accepted' &&
            !['sent', 'skipped'].includes(request.welcomeStatus) &&
-           WelcomeMessages.hasUsableName(request);
+           WelcomeMessages.hasUsableName(request) &&
+           !(globalThis.Safety && Safety.blockedBy(settings.doNotContact || [], request));
   },
 
   // When the suggestion becomes due: the delay after acceptance was detected
@@ -40,7 +41,7 @@ const WelcomeMessages = {
   },
 
   isReady(request, settings = {}, now = new Date()) {
-    return WelcomeMessages.isCandidate(request) && WelcomeMessages.readyAt(request, settings) <= now;
+    return WelcomeMessages.isCandidate(request, settings) && WelcomeMessages.readyAt(request, settings) <= now;
   },
 
   rolesPhrase(settings = {}) {

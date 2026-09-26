@@ -499,6 +499,40 @@ const AnswerBank = {
     }
 
     return null;
+  },
+
+  // Whether a draft application can now be completed with the saved answers.
+  //   app:     the saved application (status 'draft')
+  //   waiting: the "questions waiting for an answer" list, for drafts saved
+  //            before each draft kept its own questions
+  // Returns { state, missing }: state is 'ready' (every question that
+  // stopped it now has an answer), 'waiting' (some don't) or 'unknown' (it
+  // stopped for another reason, e.g. LinkedIn flagged the form).
+  draftReadiness(app = {}, settings = {}, waiting = []) {
+    let questions = Array.isArray(app.pendingQuestions) ? app.pendingQuestions : [];
+
+    if (!questions.length) {
+      const listed = String(app.notes || '').match(/^Unanswered: (.+?)(?: \(add answers.*)?$/s);
+      if (listed) {
+        questions = listed[1].split('; ').map(question => ({ question, key: AnswerBank.normalizeQuestion(question) }));
+      } else if (app.requiresCoverLetter) {
+        questions = [{ question: 'Cover letter', type: 'textarea' }];
+      }
+    }
+    if (!questions.length) return { state: 'unknown', missing: [] };
+
+    const waitingByKey = new Map(waiting.map(entry => [entry.key, entry]));
+    const missing = questions.filter(q => {
+      if (!q.type) {
+        // Older draft: the waiting list knows the question's type, and a
+        // question no longer on it has been answered (or dismissed)
+        const entry = waitingByKey.get(q.key || AnswerBank.normalizeQuestion(q.question));
+        if (!entry) return false;
+        q = entry;
+      }
+      return !AnswerBank.resolve(q.question, { type: q.type, options: q.options || [] }, settings);
+    });
+    return { state: missing.length ? 'waiting' : 'ready', missing };
   }
 };
 

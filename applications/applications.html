@@ -54,6 +54,17 @@
       <div id="followUpsList"></div>
     </section>
 
+    <!-- Drafts the saved answers now cover -->
+    <section class="panel drafts-panel hidden" id="draftsPanel">
+      <h2>📝 Complete drafts with your saved answers</h2>
+      <p class="hint" id="draftsHint"></p>
+      <div class="drafts-actions">
+        <button id="completeDraftsBtn" class="btn btn-primary">Complete drafts</button>
+        <button id="cancelDraftsBtn" class="btn btn-secondary hidden">Stop</button>
+        <span id="draftsStatus"></span>
+      </div>
+    </section>
+
     <!-- Filters and Controls -->
     <div class="controls-bar">
       <div class="filters">
@@ -156,6 +167,7 @@
 
   <script src="../shared/csv.js"></script>
   <script src="../shared/text-utils.js"></script>
+  <script src="../shared/answer-bank.js"></script>
   <script src="../shared/pipeline.js"></script>
   <script src="applications.js"></script>
 </body>

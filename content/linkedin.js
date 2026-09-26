@@ -9,6 +9,7 @@ class LinkedInJobHunter {
     this.connectionMonitor = new window.ConnectionMonitor(this.storage);
     this.jobApplicator = new window.JobApplicator(this.storage);
     this.welcomeMessenger = new window.WelcomeMessenger(this.storage);
+    this.inviteWithdrawer = new window.InviteWithdrawer(this.storage);
 
     this.isInitialized = false;
     this.settings = {};
@@ -19,7 +20,7 @@ class LinkedInJobHunter {
     // Keep every component in sync when settings change (e.g. saved from the popup)
     this.storage.onSettingsChanged((settings) => {
       this.settings = settings;
-      for (const component of [this.crawler, this.detector, this.networkExpander, this.jobApplicator]) {
+      for (const component of [this.crawler, this.detector, this.networkExpander, this.jobApplicator, this.inviteWithdrawer]) {
         component.settings = settings;
       }
       this.updateIndicator();
@@ -45,6 +46,16 @@ class LinkedInJobHunter {
       this.settings = await this.storage.getSettings();
       console.log('[Job Hunter] Settings loaded:', this.settings);
 
+      // A profile opened in the background to view it before connecting:
+      // just read it, nothing else
+      const { visit } = await chrome.runtime.sendMessage({ action: 'isProfileVisitTab' }) || {};
+      if (visit) {
+        console.log('[Job Hunter] Viewing this profile before connecting');
+        this.isInitialized = true;
+        await this.browseProfile();
+        return;
+      }
+
       // Add our UI elements
       this.addHunterUI();
       console.log('[Job Hunter] UI added');
@@ -57,9 +68,19 @@ class LinkedInJobHunter {
       // network expansion task is shared by all LinkedIn tabs and must not
       // take this one over
       const welcomeTask = await this.welcomeMessenger.claimTask();
+      const { task: draftTask } = welcomeTask ? {} : await chrome.runtime.sendMessage({ action: 'claimDraftCompletion' }) || {};
       if (welcomeTask) {
         this.welcomeMessenger.run(welcomeTask).catch(error => {
           console.error('[Job Hunter] Welcome message error:', error);
+        });
+      } else if (draftTask) {
+        // A tab opened to complete saved drafts does only that
+        this.jobApplicator.completeDraft(draftTask).catch(error => {
+          console.error('[Job Hunter] Draft completion error:', error);
+        });
+      } else if (InviteWithdrawer.hasPendingTask()) {
+        this.inviteWithdrawer.checkPending().catch(error => {
+          console.error('[Job Hunter] Withdrawal error:', error);
         });
       } else {
         // Check for pending network expansion task
@@ -78,6 +99,17 @@ class LinkedInJobHunter {
 
     } catch (error) {
       console.error('[Job Hunter] ❌ Initialization error:', error);
+    }
+  }
+
+  // Scroll slowly through a profile, as a person reading it would, until the
+  // search page closes this tab
+  async browseProfile() {
+    const pause = (min, max) => new Promise(resolve => setTimeout(resolve, min + Math.random() * (max - min)));
+    await pause(1500, 3000);
+    for (let i = 0; i < 6; i++) {
+      window.scrollBy({ top: 250 + Math.random() * 450, behavior: 'smooth' });
+      await pause(1500, 3500);
     }
   }
 
@@ -370,7 +402,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   // Nothing automated starts until the Terms of Use have been accepted
-  const starts = ['manualScan', 'expandNetwork', 'startJobApplication', 'checkAcceptedConnections'];
+  const starts = ['manualScan', 'expandNetwork', 'startJobApplication', 'checkAcceptedConnections', 'withdrawOldInvites'];
   const startsScanning = request.action === 'toggleScanning' && !hunter.settings.scanEnabled;
   if ((starts.includes(request.action) || startsScanning) && !Terms.isAccepted(hunter.settings)) {
     sendResponse({ error: 'Please accept the Terms of Use first (open the extension popup)' });
@@ -450,6 +482,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const jobStatus = hunter.jobApplicator.getStatus();
       sendResponse(jobStatus);
       return true;
+
+    case 'withdrawOldInvites':
+      if (hunter.inviteWithdrawer.isRunning) {
+        sendResponse({ error: 'Already withdrawing invitations' });
+        return false;
+      }
+      // Respond first: this may navigate to the sent invitations page
+      sendResponse({ success: true });
+      hunter.inviteWithdrawer.start().catch((error) => {
+        console.error('[Job Hunter] Withdrawal error:', error);
+      });
+      return false;
+
+    case 'stopWithdrawing':
+      hunter.inviteWithdrawer.stop();
+      sendResponse({ success: true });
+      return false;
+
+    case 'getWithdrawStatus':
+      sendResponse(hunter.inviteWithdrawer.getStatus());
+      return false;
 
     case 'checkAcceptedConnections':
       console.log('[Job Hunter] Checking for accepted connections...');

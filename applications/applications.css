@@ -474,3 +474,13 @@ body {
 }
 
 .nowrap { white-space: nowrap; }
+
+/* Completing drafts */
+.drafts-panel { border-left: 4px solid #0f766e; }
+.drafts-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#draftsStatus { font-size: 13px; color: #444; }
+.complete-btn { background: #0f766e; color: #fff; border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; margin-right: 4px; }
+.complete-btn:disabled { background: #9fb8b5; cursor: not-allowed; }
+.draft-state { display: block; font-size: 11px; margin-top: 3px; }
+.draft-state.ready { color: #15803d; }
+.draft-state.waiting { color: #b45309; }

@@ -39,10 +39,12 @@ class PopupController {
       await this.updateJobApplicationStatus();
 
       // Auto-refresh every 5 seconds
+      await this.updateWithdrawStatus();
       setInterval(() => {
         this.refreshData();
         this.updateNetworkStatus();
         this.updateJobApplicationStatus();
+        this.updateWithdrawStatus();
       }, 5000);
 
     } catch (error) {
@@ -194,6 +196,18 @@ class PopupController {
       this.stopNetworkExpansion();
     });
 
+    // Withdraw old invitations
+    document.getElementById('withdrawInvites').addEventListener('click', () => this.withdrawOldInvites());
+    document.getElementById('stopWithdrawing').addEventListener('click', async () => {
+      await this.sendMessageToContentScript('stopWithdrawing');
+      this.showSuccess('Stopping after the current invitation');
+    });
+
+    document.getElementById('openMessageTest').addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: chrome.runtime.getURL('analytics/analytics.html#messageTest') });
+    });
+
     // Start job application button
     document.getElementById('startJobApplication').addEventListener('click', () => {
       this.startJobApplication();
@@ -210,7 +224,7 @@ class PopupController {
   applyTermsGate() {
     const accepted = Terms.isAccepted(this.settings);
     document.getElementById('termsBanner').style.display = accepted ? 'none' : 'block';
-    for (const id of ['toggleScanning', 'manualScan', 'expandNetwork', 'startJobApplication']) {
+    for (const id of ['toggleScanning', 'manualScan', 'expandNetwork', 'startJobApplication', 'withdrawInvites']) {
       const button = document.getElementById(id);
       if (!accepted) {
         button.disabled = true;
@@ -230,9 +244,14 @@ class PopupController {
 
       const { applications } = await chrome.runtime.sendMessage({ action: 'getJobApplications' });
       const followUpDays = Pipeline.followUpDays(this.settings);
-      const due = (applications?.applications || []).filter(app => Pipeline.followUpDue(app, followUpDays)).length;
-      document.getElementById('followUpsBadge').textContent =
-        due ? `(${due} follow-up${due === 1 ? '' : 's'} due)` : '';
+      const apps = applications?.applications || [];
+      const due = apps.filter(app => Pipeline.followUpDue(app, followUpDays)).length;
+      const readyDrafts = apps.filter(app => app.status === 'draft' && Pipeline.jobViewUrl(app) &&
+        AnswerBank.draftReadiness(app, this.settings, questions).state === 'ready').length;
+      document.getElementById('followUpsBadge').textContent = [
+        due ? `${due} follow-up${due === 1 ? '' : 's'} due` : '',
+        readyDrafts ? `${readyDrafts} draft${readyDrafts === 1 ? '' : 's'} ready` : ''
+      ].filter(Boolean).map(text => `(${text})`).join(' ');
 
       const { analytics } = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
       const welcomes = (analytics?.requests || []).filter(req => WelcomeMessages.isReady(req, this.settings)).length;
@@ -342,6 +361,10 @@ class PopupController {
       this.settings.usePersonalizedMessages !== false; // Default to true
     document.getElementById('targetHiringOnly').checked =
       this.settings.targetHiringOnly === true; // Default to false
+    document.getElementById('warmUpEnabled').checked = Safety.warmUpEnabled(this.settings);
+    document.getElementById('visitProfileFirst').checked = this.settings.visitProfileFirst !== false;
+    document.getElementById('withdrawAfterDays').value = this.settings.withdrawAfterDays || 21;
+    document.getElementById('doNotContact').value = (this.settings.doNotContact || []).join('\n');
 
     // Job application settings
     document.getElementById('maxDailyApplications').value = this.settings.maxDailyApplications || 20;
@@ -367,11 +390,17 @@ class PopupController {
     try {
       const response = await this.sendMessageToContentScript('getNetworkStatus');
       if (!response.error && response.dailyLimits) {
-        const { dailyLimits, remainingInvites, isRunning } = response;
-        const maxInvites = this.settings.maxDailyInvites || 30;
+        const { dailyLimits, isRunning } = response;
+        // Today's limit allows for the warm-up
+        const allowance = await chrome.runtime.sendMessage({ action: 'getInviteAllowance' });
+        const maxInvites = allowance?.limit || this.settings.maxDailyInvites || 30;
+        const remainingInvites = Math.max(0, maxInvites - (dailyLimits.invitesSent || 0));
 
         document.getElementById('todaysInvites').textContent = dailyLimits.invitesSent || 0;
         document.getElementById('inviteLimit').textContent = maxInvites;
+        document.getElementById('warmUpNote').textContent = allowance?.warming
+          ? `🌱 Warming up: day ${allowance.day + 1} of ${Safety.WARM_UP_DAYS}, full limit ${allowance.max}/day`
+          : '';
 
         const expandBtn = document.getElementById('expandNetwork');
         const stopBtn = document.getElementById('stopExpansion');
@@ -396,6 +425,47 @@ class PopupController {
       }
     } catch (error) {
       console.error('Failed to update network status:', error);
+    }
+  }
+
+  async updateWithdrawStatus() {
+    const days = this.settings.withdrawAfterDays || 21;
+    const hint = document.getElementById('withdrawHint');
+    const withdrawBtn = document.getElementById('withdrawInvites');
+    const stopBtn = document.getElementById('stopWithdrawing');
+
+    const status = await this.sendMessageToContentScript('getWithdrawStatus');
+    const running = status?.isRunning === true;
+    withdrawBtn.style.display = running ? 'none' : 'block';
+    stopBtn.style.display = running ? 'block' : 'none';
+    if (running) {
+      const p = status.progress || {};
+      hint.textContent = `Withdrawing: ${p.withdrawn || 0} of ${p.eligible ?? '…'} done`;
+      return;
+    }
+
+    const { lastWithdrawal } = await chrome.storage.local.get('lastWithdrawal');
+    let text = `Withdraws invitations nobody has answered after ${days} days, oldest first.`;
+    if (lastWithdrawal) {
+      const when = new Date(lastWithdrawal.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      text += ` Last run (${when}): withdrew ${lastWithdrawal.withdrawn} of ${lastWithdrawal.checked} pending` +
+              (lastWithdrawal.stoppedReason ? ` - ${lastWithdrawal.stoppedReason}` : '') + '.';
+    }
+    hint.textContent = text;
+  }
+
+  async withdrawOldInvites() {
+    const days = this.settings.withdrawAfterDays || 21;
+    if (!confirm(`Withdraw connection invitations that have been waiting more than ${days} days?\n\n` +
+                 'This opens your sent invitations on LinkedIn and withdraws the oldest first. ' +
+                 'LinkedIn won\'t let you invite the same people again for about 3 weeks.')) {
+      return;
+    }
+    const response = await this.sendMessageToContentScript('withdrawOldInvites');
+    if (response.error) {
+      this.showError(response.error.includes('Terms') ? response.error : 'Please refresh the LinkedIn page first');
+    } else {
+      this.showSuccess('Opening your sent invitations…');
     }
   }
 
@@ -618,6 +688,7 @@ class PopupController {
       // (e.g. scanning toggled on the page) aren't overwritten
       const latestResponse = await chrome.runtime.sendMessage({ action: 'getSettings' });
       const latestSettings = latestResponse.settings || this.settings;
+      const warmUpEnabled = document.getElementById('warmUpEnabled').checked;
 
       const newSettings = {
         ...latestSettings,
@@ -632,6 +703,13 @@ class PopupController {
         connectionsPerRole: this.readNumber('connectionsPerRole', 3),
         usePersonalizedMessages: document.getElementById('usePersonalizedMessages').checked,
         targetHiringOnly: document.getElementById('targetHiringOnly').checked,
+        warmUpEnabled,
+        // Switching the warm-up back on starts it again from today
+        warmUpStartDate: warmUpEnabled && !Safety.warmUpEnabled(latestSettings)
+          ? new Date().toISOString() : latestSettings.warmUpStartDate || null,
+        visitProfileFirst: document.getElementById('visitProfileFirst').checked,
+        withdrawAfterDays: Math.min(180, Math.max(7, this.readNumber('withdrawAfterDays', 21))),
+        doNotContact: Safety.parseList(document.getElementById('doNotContact').value),
 
         // Job application settings
         maxDailyApplications: this.readNumber('maxDailyApplications', 20),

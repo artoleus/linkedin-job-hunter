@@ -24,10 +24,16 @@ A Chrome browser extension that helps you organise a job search on LinkedIn: fin
 - **Personalized Messages**: Customizable templates for connection requests
 - **Daily Limits**: Conservative limits (25-30 invites/day) for safe operation
 - **Connection Analytics**: Track acceptance rates, response times, and success metrics
+- **Warm-up**: New accounts (or after a break) start at a quarter of the daily limit and build up to it over 3 weeks
+- **Do-not-contact list**: Names, companies or profile links never to invite; anyone invited before is never invited again
+- **View profile first**: Each person's profile is viewed for a few seconds before inviting them
+- **Withdraw old invitations**: One click withdraws invitations still unanswered after 21 days (configurable), oldest first
+- **Message test (A/B)**: Compare two invitation wordings and see which gets more acceptances (Analytics page)
 - **Welcome Messages**: When someone accepts, a friendly welcome message is suggested on the Connection Analytics page; review or edit it, then one click types and sends it in LinkedIn (never to the wrong person: it checks the conversation is theirs first)
 
 ### Job Application Automation
 - **Auto-Apply**: Automatically apply to jobs matching your criteria
+- **Complete drafts**: Once you've answered the questions that stopped an application, JobTrail reopens the job and submits it with your saved answers
 - **Distance Filtering**: Filter by remote, hybrid, or onsite with location-based distance calculation
 - **Salary Filtering**: Set minimum/maximum salary requirements
 - **Application Answers**: Save your answers once (right to work, sponsorship, UK security clearance, years per skill, certifications, salary, notice period, education and your own custom answers) and Easy Apply questions are filled in for you. Questions without a saved answer are never guessed: the application is saved as a draft and the question is listed for you to answer once
@@ -372,7 +378,15 @@ All automation runs in content scripts injected into LinkedIn pages:
 
 ## Version History
 
-### v1.3 (Current)
+### v1.5 (Current)
+- **Account safety**: warm-up of the daily invitation limit, do-not-contact list, never re-inviting the same person, viewing profiles before inviting, withdrawing old invitations
+- **Message test (A/B)**: compare two invitation wordings by acceptance rate
+- **Complete drafts**: submit draft applications automatically once their questions have saved answers
+
+### v1.4
+- Renamed to JobTrail, with Terms of Use, Privacy Policy and a first-run welcome page; home town setting; detailed logs off by default
+
+### v1.3
 - **Application Answers**: Easy Apply questions answered from your saved answers; unanswered questions listed to answer once
 - **Application Pipeline**: Interviewing / offer / rejected statuses, timeline notes, follow-up reminders and "What's working" stats
 - **Welcome Messages**: One-click welcome messages for accepted connections

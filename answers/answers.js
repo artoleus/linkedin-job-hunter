@@ -35,14 +35,61 @@ class AnswersPage {
     this.renderYesNoFields();
     this.fillForm(this.settings.answerBank || {});
     this.bindEvents();
-    await this.loadWaitingQuestions();
-
-    // Refresh the waiting list when an application run records new questions
+    // Refresh the waiting list when an application run records new questions,
+    // and the ready drafts whenever answers or applications change. Listen
+    // before the first load so a change made meanwhile isn't missed.
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.unansweredQuestions) {
+      if (area !== 'local') return;
+      if (changes.unansweredQuestions) {
         this.loadWaitingQuestions();
       }
+      if (changes.unansweredQuestions || changes.settings || changes.jobApplications || changes.draftCompletion) {
+        this.refreshReadyDrafts();
+      }
     });
+
+    await this.loadWaitingQuestions();
+    await this.refreshReadyDrafts();
+
+    document.getElementById('completeDraftsBtn').addEventListener('click', () => this.completeReadyDrafts());
+  }
+
+  // ---- Drafts the saved answers now cover -------------------------------------
+
+  async readyDrafts() {
+    const [{ settings }, { applications }, { questions = [] }] = await Promise.all([
+      chrome.runtime.sendMessage({ action: 'getSettings' }),
+      chrome.runtime.sendMessage({ action: 'getJobApplications' }),
+      chrome.runtime.sendMessage({ action: 'getUnansweredQuestions' })
+    ]);
+    return (applications?.applications || []).filter(app => app.status === 'draft' && Pipeline.jobViewUrl(app) &&
+      AnswerBank.draftReadiness(app, settings || {}, questions).state === 'ready');
+  }
+
+  async refreshReadyDrafts() {
+    const ready = await this.readyDrafts();
+    const { draftCompletion } = await chrome.storage.local.get(['draftCompletion']);
+    document.getElementById('draftsReadyPanel').classList.toggle('hidden', !ready.length && !draftCompletion);
+    document.getElementById('draftsReadyHint').textContent = ready.length
+      ? `Your saved answers now cover every question that stopped ${ready.length} draft application${ready.length === 1 ? '' : 's'} ` +
+        `(${ready.slice(0, 3).map(app => app.jobTitle).join(', ')}${ready.length > 3 ? '…' : ''}). ` +
+        'JobTrail can reopen each job on LinkedIn and submit it with these answers, one at a time.'
+      : '';
+    const button = document.getElementById('completeDraftsBtn');
+    button.disabled = !ready.length || !!draftCompletion;
+    document.getElementById('draftsStatus').textContent = draftCompletion ? '⏳ Completing drafts in a LinkedIn tab…' : '';
+  }
+
+  async completeReadyDrafts() {
+    if (this.dirty && !confirm('Some changes on this page are not saved yet, and won\'t be used. Continue anyway?')) return;
+    const ready = await this.readyDrafts();
+    if (!ready.length) return;
+    if (!confirm(`Submit ${ready.length} application${ready.length === 1 ? '' : 's'} using your saved answers?\n\n` +
+                 'A LinkedIn tab opens and works through them one at a time. Anything still unanswered is left as a draft.')) {
+      return;
+    }
+    const result = await chrome.runtime.sendMessage({ action: 'startDraftCompletion', applicationIds: ready.map(app => app.id) });
+    if (!result || result.error) alert('Could not start: ' + (result?.error || 'no response from the extension'));
   }
 
   // ---- Form ------------------------------------------------------------------
@@ -266,7 +313,10 @@ class AnswersPage {
   // ---- Questions waiting for an answer --------------------------------------
 
   async loadWaitingQuestions() {
+    // Only the latest of overlapping loads draws the list
+    const load = this.waitingLoad = (this.waitingLoad || 0) + 1;
     const { questions = [] } = await chrome.runtime.sendMessage({ action: 'getUnansweredQuestions' });
+    if (load !== this.waitingLoad) return;
     const panel = document.getElementById('waitingPanel');
     const list = document.getElementById('waitingList');
 

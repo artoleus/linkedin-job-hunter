@@ -17,6 +17,16 @@
       </p>
     </header>
 
+    <section id="draftsReadyPanel" class="panel drafts-panel hidden">
+      <h2>✅ Drafts ready to complete</h2>
+      <p class="hint" id="draftsReadyHint"></p>
+      <div class="drafts-actions">
+        <button type="button" id="completeDraftsBtn" class="btn btn-primary">Complete them now</button>
+        <a href="../applications/applications.html" target="_blank">See them on the Applications page</a>
+        <span id="draftsStatus"></span>
+      </div>
+    </section>
+
     <section id="waitingPanel" class="panel waiting hidden">
       <h2>❓ Questions waiting for an answer <span id="waitingCount" class="count-badge"></span></h2>
       <p class="hint">These stopped an application. Answer each one once and future applications will fill it in.</p>
@@ -169,6 +179,7 @@
 
   <script src="../shared/text-utils.js"></script>
   <script src="../shared/answer-bank.js"></script>
+  <script src="../shared/pipeline.js"></script>
   <script src="answers.js"></script>
 </body>
 </html>

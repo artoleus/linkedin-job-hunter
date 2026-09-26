@@ -18,19 +18,21 @@ class ApplicationsTracker {
       document.getElementById('followUpDays').value = Pipeline.followUpDays(this.settings);
       this.populateStatusSelect(document.getElementById('addStatus'), 'applied');
 
-      await this.loadData();
-      this.setupEventListeners();
-      this.render();
-
-      // Show new applications (e.g. from a running Auto Apply) as they arrive
+      // Show new applications (e.g. from a running Auto Apply) as they
+      // arrive. Listen before the first load so nothing is missed meanwhile.
       chrome.storage.onChanged.addListener(async (changes, area) => {
         if (area !== 'local') return;
         if (changes.settings) this.settings = changes.settings.newValue || {};
-        if (changes.jobApplications || changes.settings) {
+        if (changes.jobApplications || changes.settings || changes.unansweredQuestions ||
+            changes.draftCompletion || changes.lastDraftCompletion) {
           await this.loadData();
           this.render();
         }
       });
+
+      await this.loadData();
+      this.setupEventListeners();
+      this.render();
     } catch (error) {
       console.error('[Applications] Initialization error:', error);
     }
@@ -41,6 +43,11 @@ class ApplicationsTracker {
     // Result contains a jobApplications object with applications array
     const jobApps = result.applications || result;
     this.applications = jobApps.applications || [];
+    const { questions = [] } = await chrome.runtime.sendMessage({ action: 'getUnansweredQuestions' });
+    this.waitingQuestions = questions;
+    const stored = await chrome.storage.local.get(['draftCompletion', 'lastDraftCompletion']);
+    this.draftRun = stored.draftCompletion || null;
+    this.lastDraftRun = stored.lastDraftCompletion || null;
     console.log('[Applications] Loaded', this.applications.length, 'applications');
   }
 
@@ -74,13 +81,21 @@ class ApplicationsTracker {
       this.addApplication();
     });
 
+    // Complete drafts with the saved answers
+    document.getElementById('completeDraftsBtn').addEventListener('click', () =>
+      this.completeDrafts(this.readyDrafts().map(app => app.id)));
+    document.getElementById('cancelDraftsBtn').addEventListener('click', () =>
+      chrome.runtime.sendMessage({ action: 'cancelDraftCompletion' }));
+
     // Table actions (event delegation)
     const tbody = document.getElementById('applicationsTableBody');
     tbody.addEventListener('click', async (e) => {
       const button = e.target.closest('button');
       if (!button) return;
       const appId = button.dataset.appId;
-      if (button.classList.contains('delete-btn')) {
+      if (button.classList.contains('complete-btn')) {
+        await this.completeDrafts([appId]);
+      } else if (button.classList.contains('delete-btn')) {
         await this.deleteApplication(appId);
       } else if (button.classList.contains('details-btn')) {
         this.expanded.has(appId) ? this.expanded.delete(appId) : this.expanded.add(appId);
@@ -204,9 +219,81 @@ class ApplicationsTracker {
 
   render() {
     this.renderStats();
+    this.renderDrafts();
     this.renderFollowUps();
     this.renderTable();
     this.renderInsights();
+  }
+
+  // ---- Completing drafts -----------------------------------------------------------
+
+  // { state: 'ready' | 'waiting' | 'unknown', missing } for a draft
+  draftReadiness(app) {
+    return AnswerBank.draftReadiness(app, this.settings, this.waitingQuestions || []);
+  }
+
+  // Drafts whose questions all have saved answers and that can be reopened on LinkedIn
+  readyDrafts() {
+    return this.applications.filter(app => app.status === 'draft' && Pipeline.jobViewUrl(app) &&
+                                           this.draftReadiness(app).state === 'ready');
+  }
+
+  renderDrafts() {
+    const drafts = this.applications.filter(app => app.status === 'draft');
+    const ready = this.readyDrafts();
+    const waiting = drafts.filter(app => this.draftReadiness(app).state === 'waiting');
+    const running = !!this.draftRun;
+
+    document.getElementById('draftsPanel').classList.toggle('hidden', !drafts.length && !running && !this.lastDraftRun);
+
+    const hint = [];
+    if (ready.length) {
+      hint.push(`${ready.length} draft${ready.length === 1 ? '' : 's'} can now be completed: your saved answers cover every question that stopped ${ready.length === 1 ? 'it' : 'them'}. ` +
+                'JobTrail reopens each job on LinkedIn in a new tab, fills in the form with your saved answers and submits it, one at a time.');
+    } else if (drafts.length) {
+      hint.push('No drafts are ready yet.');
+    }
+    if (waiting.length) {
+      hint.push(`${waiting.length} still need${waiting.length === 1 ? 's' : ''} answers: add them on the Application Answers page (opened from the popup), then come back here.`);
+    }
+    document.getElementById('draftsHint').textContent = hint.join(' ');
+
+    const button = document.getElementById('completeDraftsBtn');
+    button.textContent = `Complete ${ready.length || ''} draft${ready.length === 1 ? '' : 's'}`.replace('  ', ' ');
+    button.disabled = !ready.length || running;
+    button.classList.toggle('hidden', running);
+    document.getElementById('cancelDraftsBtn').classList.toggle('hidden', !running);
+
+    const status = document.getElementById('draftsStatus');
+    if (running) {
+      const run = this.draftRun;
+      const current = run.items[run.index];
+      status.textContent = `⏳ Working on ${Math.min(run.index + 1, run.items.length)} of ${run.items.length}` +
+        (current ? `: ${current.jobTitle}${current.company ? ' at ' + current.company : ''}` : '') + ' (in a LinkedIn tab)';
+    } else if (this.lastDraftRun) {
+      const last = this.lastDraftRun;
+      const parts = [`${last.applied} submitted`];
+      if (last.stillDraft) parts.push(`${last.stillDraft} still missing answers`);
+      if (last.failed) parts.push(`${last.failed} couldn't be completed`);
+      if (last.notReached) parts.push(`${last.notReached} not reached`);
+      status.textContent = `Last run (${Pipeline.formatShortDate(new Date(last.date))}): ${parts.join(', ')}` +
+        (last.reason ? ` - ${last.reason}` : '') + '.';
+    } else {
+      status.textContent = '';
+    }
+  }
+
+  async completeDrafts(ids) {
+    if (!ids.length) return;
+    const count = ids.length;
+    if (!confirm(`Submit ${count} application${count === 1 ? '' : 's'} using your saved answers?\n\n` +
+                 'A LinkedIn tab opens and works through them one at a time. Anything still unanswered is left as a draft.')) {
+      return;
+    }
+    const result = await chrome.runtime.sendMessage({ action: 'startDraftCompletion', applicationIds: ids });
+    if (!result || result.error) {
+      alert('Could not start: ' + (result?.error || 'no response from the extension'));
+    }
   }
 
   followUpDays() {
@@ -348,8 +435,9 @@ class ApplicationsTracker {
           <td class="nowrap">${this.escapeHtml(Pipeline.formatAgo(Pipeline.lastActivity(app)))}</td>
           <td>${this.statusSelectHtml(app.id, status)}</td>
           <td class="actions-cell">
+            ${status === 'draft' ? this.completeButtonHtml(app) : ''}
             <button class="details-btn" data-app-id="${id}" title="Timeline, notes and follow-up reminder">${isOpen ? '▾' : '▸'} Timeline</button>
-            ${jobUrl ? `<a href="${jobUrl}" target="_blank" rel="noopener" class="action-link">${status === 'draft' ? 'Complete' : 'View Job'}</a>` : ''}
+            ${jobUrl ? `<a href="${jobUrl}" target="_blank" rel="noopener" class="action-link">${status === 'draft' ? 'Open job' : 'View Job'}</a>` : ''}
             <button class="delete-btn" data-app-id="${id}" title="Delete application">Delete</button>
           </td>
         </tr>
@@ -365,6 +453,21 @@ class ApplicationsTracker {
       cell.appendChild(this.renderDetails(app));
       if (noteDrafts.has(app.id)) cell.querySelector('textarea').value = noteDrafts.get(app.id);
     }
+  }
+
+  // "Auto-complete" for a draft, with why it can't run yet if it can't
+  completeButtonHtml(app) {
+    const { state, missing } = this.draftReadiness(app);
+    const hasLink = !!Pipeline.jobViewUrl(app);
+    const ready = state === 'ready' && hasLink;
+    const why = !hasLink ? 'No LinkedIn job link saved for this draft'
+      : state === 'waiting' ? `Still needs an answer to: ${missing.map(q => q.question).join('; ')}`
+      : state === 'unknown' ? 'LinkedIn flagged this form - try it anyway'
+      : 'Submit it with your saved answers';
+    const label = state === 'ready' ? '<span class="draft-state ready">✓ Answers saved</span>'
+      : state === 'waiting' ? `<span class="draft-state waiting">Needs ${missing.length} answer${missing.length === 1 ? '' : 's'}</span>` : '';
+    return `<button class="complete-btn" data-app-id="${this.escapeHtml(app.id)}" title="${this.escapeHtml(why)}"` +
+           `${(ready || (state === 'unknown' && hasLink)) && !this.draftRun ? '' : ' disabled'}>▶ Auto-complete</button>${label}`;
   }
 
   statusSelectHtml(appId, status) {

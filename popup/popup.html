@@ -60,6 +60,7 @@
           <span class="stat-value" id="todaysInvites">0</span>
           <span class="stat-limit">/ <span id="inviteLimit">30</span></span>
         </div>
+        <small id="warmUpNote" class="warm-up-note"></small>
       </div>
       <div class="controls">
         <button id="expandNetwork" class="btn btn-primary">
@@ -70,6 +71,15 @@
         </button>
       </div>
       <small class="network-hint">Sends personalized connection requests to professionals in your target roles</small>
+      <div class="controls withdraw-controls">
+        <button id="withdrawInvites" class="btn btn-secondary">
+          Withdraw old invitations
+        </button>
+        <button id="stopWithdrawing" class="btn btn-secondary" style="display: none;">
+          Stop withdrawing
+        </button>
+      </div>
+      <small class="network-hint" id="withdrawHint">Withdraws invitations nobody has answered after 21 days, oldest first</small>
     </div>
 
     <!-- Job Application Section -->
@@ -175,6 +185,38 @@
           Use Personalized Messages
         </label>
         <small>Adds custom notes to connection requests (more natural)</small>
+      </div>
+
+      <div class="setting-group">
+        <label>
+          <input type="checkbox" id="warmUpEnabled" checked>
+          Warm up gradually
+        </label>
+        <small>Starts at a quarter of your daily limit and builds up to it over 3 weeks. Recommended for new accounts or after a break; untick and tick again to restart.</small>
+      </div>
+
+      <div class="setting-group">
+        <label>
+          <input type="checkbox" id="visitProfileFirst" checked>
+          View each profile before inviting
+        </label>
+        <small>Opens their profile in a background tab for a few seconds first (they'll see you viewed it). Counts towards 60 profile views a day.</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="withdrawAfterDays">Withdraw invitations older than (days):</label>
+        <input type="number" id="withdrawAfterDays" min="7" max="180" value="21">
+        <small>Used by "Withdraw old invitations"</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="doNotContact">Do not contact (one per line):</label>
+        <textarea id="doNotContact" rows="3" placeholder="Current employer Ltd&#10;Jane Smith&#10;https://www.linkedin.com/in/jane-smith/"></textarea>
+        <small>Names, companies or profile links never to invite. People you've invited before are always skipped.</small>
+      </div>
+
+      <div class="setting-group">
+        <small>Want to compare two invitation wordings? Set up a <a href="#" id="openMessageTest">message test</a> on the Analytics page.</small>
       </div>
 
       <div class="setting-group">
@@ -285,9 +327,11 @@
   </div>
 
   <script src="../shared/terms.js"></script>
+  <script src="../shared/safety.js"></script>
   <script src="../shared/pipeline.js"></script>
   <script src="../shared/uk-places.js"></script>
   <script src="../shared/text-utils.js"></script>
+  <script src="../shared/answer-bank.js"></script>
   <script src="../shared/welcome-messages.js"></script>
   <script src="popup.js"></script>
 </body>

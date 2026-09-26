@@ -25,8 +25,8 @@ content scripts (linkedin.js) → storage.js → background.js
 **Content Script Loading Order (important):**
 The manifest.json loads content scripts in a specific sequence:
 1. `storage/storage.js` - Must load first (provides StorageManager class and the console.log gate)
-2. `shared/terms.js`, `shared/text-utils.js`, `shared/answer-bank.js`, `shared/uk-places.js` - shared helpers
-3. `content/job-detector.js`, `network-crawler.js`, `network-expander.js`, `connection-monitor.js`, `job-applicator.js`, `welcome-messenger.js` - feature classes
+2. `shared/terms.js`, `shared/safety.js`, `shared/text-utils.js`, `shared/answer-bank.js`, `shared/pipeline.js`, `shared/uk-places.js` - shared helpers
+3. `content/job-detector.js`, `network-crawler.js`, `network-expander.js`, `connection-monitor.js`, `job-applicator.js`, `welcome-messenger.js`, `invite-withdrawer.js` - feature classes
 4. `content/linkedin.js` - Last (orchestrates everything, depends on above classes)
 
 Each script exposes classes via `window.*` globals for cross-script communication.
@@ -39,11 +39,11 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/job-detector.js**: Analyzes DOM elements to identify job opportunities. Uses keyword matching, regex patterns, and confidence scoring (0.0-1.0) to rate opportunities. Extracts structured data from posts, profiles, and company updates.
 
-- **content/job-applicator.js**: Automated job application system using LinkedIn Easy Apply. Features flexible role matching (handles abbreviations like GRC, vCISO, ISO27001), pagination support, distance calculation for hybrid roles, answers Easy Apply questions from the user's saved answers (see `shared/answer-bank.js`), and when a required question has no saved answer it records the question for the Application Answers page, saves the application as a draft and closes the form (keeping LinkedIn's saved copy). Includes daily rate limiting (default 20/day) and human-like behavior simulation.
+- **content/job-applicator.js**: Automated job application system using LinkedIn Easy Apply. Features flexible role matching (handles abbreviations like GRC, vCISO, ISO27001), pagination support, distance calculation for hybrid roles, answers Easy Apply questions from the user's saved answers (see `shared/answer-bank.js`), and when a required question has no saved answer it records the question for the Application Answers page, saves the application as a draft (with its `pendingQuestions`) and closes the form (keeping LinkedIn's saved copy). `completeDraft()` retries a draft on its job page (`/jobs/view/<id>/`, from `Pipeline.jobViewUrl`) once the answers cover it: the Applications or Answers page asks the background (`startDraftCompletion`) to open the jobs one at a time in one tab; the content script there claims each job (`claimDraftCompletion`), runs Easy Apply and reports (`draftCompletionResult`), which updates the same application record (`saveJobApplication` with `updateId`) and moves the tab on. Includes daily rate limiting (default 20/day) and human-like behavior simulation.
 
 - **content/network-crawler.js**: Implements rate-limited profile visiting with human-like behavior (random delays, natural scrolling, simulated mouse events). Tracks daily limits in localStorage with automatic midnight reset.
 
-- **content/network-expander.js**: Automated network expansion system that sends personalized connection requests. Features role rotation, random selection, human-like typing, configurable daily limits (default 30/day), and context-aware messaging for hiring managers vs general networking. Runs in automated mode cycling through all target roles until daily limit reached. Tracks connection analytics for performance monitoring.
+- **content/network-expander.js**: Automated network expansion system that sends personalized connection requests. Features role rotation, random selection, human-like typing, configurable daily limits (default 30/day), and context-aware messaging for hiring managers vs general networking. Runs in automated mode cycling through all target roles until daily limit reached. Tracks connection analytics for performance monitoring. Account safety: today's limit comes from the background's `getInviteAllowance` (warm-up, see `shared/safety.js`); people on `settings.doNotContact` or invited before (any status, by profile link or name) are skipped; with `settings.visitProfileFirst` (default on) the profile is opened in a background tab via `openProfileVisit` for 8-15s before connecting (the tab's content script only scrolls: `isProfileVisitTab`), counting towards `maxDailyProfileViews`. Notes use the A/B test wording when `settings.messageTest.mode` is 'test'/'A'/'B' and record `messageVariant` on the request.
 
 - **storage/storage.js**: Wrapper around chrome.runtime.sendMessage that provides async/await interface to background service worker. Includes in-memory cache for settings. Also silences `console.log` in content scripts unless `settings.debugLogging` is on ("Show detailed logs" in the popup settings); warnings and errors always show.
 
@@ -51,13 +51,17 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/connection-monitor.js**: Monitors connection request status changes by checking LinkedIn's sent invitations page and connections page. Detects accepted, pending, and declined connections. Uses fuzzy name matching to handle variations. Navigates between pages to verify connection status accurately. Falls back to page content search when card selectors fail.
 
+- **content/invite-withdrawer.js**: "Withdraw old invitations" (popup button → `withdrawOldInvites`). Sets a pending task in localStorage, goes to the sent invitations page, loads all invitations ("Load more"/scrolling), reads each card's age ("Sent 3 weeks ago" via `Safety.sentAgeDays`) and withdraws those older than `settings.withdrawAfterDays` (default 21), oldest first, confirming LinkedIn's pop-up; stops after 3 unconfirmed withdrawals. Marks matching analytics requests `withdrawn` (`markInvitationWithdrawn`) and saves `lastWithdrawal` for the popup. The connection monitor stands aside on the sent page while a withdrawal task is pending.
+
+- **shared/safety.js**: `Safety` rules shared by content scripts, popup, analytics page and background (`globalThis`): warm-up (`inviteLimit`: starts at a quarter of `maxDailyInvites`, min 5, rising to the full limit over 21 days from `settings.warmUpStartDate`, which the background sets from the first recorded invitation or today; re-ticking the setting restarts it), the do-not-contact matcher (`blockedBy`: profile links match that profile, other entries match whole words in the name/card text), `sentAgeDays`, and the message test (`chooseVariant`, `fillMessage` with {first}/{role}/{field}, `messageTestResults` with a two-proportion z-test and at least 20 per wording).
+
 - **content/welcome-messenger.js**: Sends a welcome message to a new connection. The Connection Analytics page asks the background (`startWelcomeMessage`) to open the person's profile, or a search of 1st-degree connections, in a new tab; the content script there claims the task once (`getPendingWelcome`), clicks Message, verifies the conversation header names the person (never types otherwise, and refuses ambiguous name searches), types the message and reports back (`welcomeMessageResult`). A tab opened for a welcome message skips the network expander's shared pending task.
 
 - **shared/welcome-messages.js**: `WelcomeMessages` templates, draft wording and "ready" rules (accepted, not yet welcomed/skipped, `settings.welcomeDelayDays` after acceptance, default 1); shared by the Connection Analytics page and the popup.
 
-- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped). Has the "Welcome messages" queue for accepted connections (edit, send via LinkedIn, new wording, skip).
+- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped). Has the "Welcome messages" queue for accepted connections (edit, send via LinkedIn, new wording, skip), the "Message test" panel (two note wordings, mode off/test/A/B, results and "use the winner"), a "Withdrawn" status, and a per-row "Don't contact" button (`addDoNotContact`).
 
-- **applications/applications.js**: Job applications tracker dashboard. Pipeline statuses (needs completion, applied, interviewing, offer, rejected, withdrawn) changed from the table, a per-application timeline with dated notes and an optional follow-up reminder date, a "Follow-ups due" list (after `settings.followUpDays` without an update, default 7, or on the reminder date), a "What's working" breakdown by target role and work type, adding applications made outside Auto Apply, CSV export/import (including history; import skips duplicates) and deletion. Status changes, notes and follow-ups go through the background's `addApplicationEvent`, which appends to `application.history`.
+- **applications/applications.js**: Job applications tracker dashboard. Pipeline statuses (needs completion, applied, interviewing, offer, rejected, withdrawn) changed from the table, a per-application timeline with dated notes and an optional follow-up reminder date, a "Follow-ups due" list (after `settings.followUpDays` without an update, default 7, or on the reminder date), a "What's working" breakdown by target role and work type, adding applications made outside Auto Apply, CSV export/import (including history; import skips duplicates) and deletion. Drafts whose questions now all have saved answers (`AnswerBank.draftReadiness`) can be completed from the "Complete drafts" panel or a row's "Auto-complete" button; the Application Answers page and the popup also show how many are ready. Status changes, notes and follow-ups go through the background's `addApplicationEvent`, which appends to `application.history`.
 
 - **shared/pipeline.js**: `Pipeline` status labels, follow-up rules (`followUpDue`), last-activity and outcome stats; shared by the Applications page and the popup (which shows how many follow-ups are due).
 
@@ -175,7 +179,7 @@ Add to `job-detector.js`:
 - ✅ Time-of-day analysis (best times to send requests)
 - ✅ Day-of-week patterns
 - ✅ Role-specific acceptance rates
-- Future: A/B testing for message templates
+- ✅ A/B testing of invitation note wordings (Analytics → Message test)
 
 **3. Smart Opportunity Scoring**
 - ML-based scoring using your historical actions (which jobs you clicked/saved)
@@ -188,6 +192,7 @@ Add to `job-detector.js`:
 - Thank you messages for new connections
 - Periodic check-ins with network (e.g., congratulate on work anniversaries)
 - Follow-up on unanswered applications
+- ✅ Complete draft applications automatically once their questions have saved answers
 
 **5. Job Alert Notifications**
 - Browser notifications for high-confidence opportunities
@@ -267,6 +272,7 @@ Add to `job-detector.js`:
 - Retry logic for failed connection requests
 - LinkedIn rate limit detection and auto-pause
 - Account safety monitoring (unusual activity warnings)
+- ✅ Warm-up of the daily invitation limit, do-not-contact list, never re-inviting the same person, viewing profiles before connecting, withdrawing old invitations
 - Graceful degradation when DOM structure changes
 
 **18. Testing & Quality**

@@ -17,6 +17,16 @@ const Pipeline = {
   DEFAULT_FOLLOW_UP_DAYS: 7,
   DAY_MS: 24 * 60 * 60 * 1000,
 
+  // The job's own page (/jobs/view/<id>/) from a saved link, which may be a
+  // search results link with ?currentJobId=<id>; null if there's no job id
+  jobViewUrl(app = {}) {
+    for (const link of [app.jobUrl, app.jobId]) {
+      const match = String(link || '').match(/[?&]currentJobId=(\d+)|\/jobs\/view\/(?:[^/?#]*-)?(\d+)/);
+      if (match) return `https://www.linkedin.com/jobs/view/${match[1] || match[2]}/`;
+    }
+    return null;
+  },
+
   normalizeStatus(status) {
     const value = String(status || '').trim().toLowerCase();
     if (value === 'submitted' || value === '') return 'applied';
@@ -143,4 +153,5 @@ const Pipeline = {
   }
 };
 
-window.Pipeline = Pipeline;
+// globalThis: also loaded by the background service worker, which has no window
+globalThis.Pipeline = Pipeline;

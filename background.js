@@ -1,9 +1,13 @@
 // Background service worker for JobTrail
 
-importScripts('shared/terms.js');
+importScripts('shared/terms.js', 'shared/safety.js', 'shared/pipeline.js');
 
 // A welcome message still "sending" after this long has failed
 const WELCOME_TIMEOUT_MS = 3 * 60 * 1000;
+// A draft-completion run with no progress for this long has stalled
+const DRAFT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+// Profile tabs opened for a visit are closed after this long at the latest
+const PROFILE_VISIT_MAX_MS = 90 * 1000;
 
 class BackgroundService {
   constructor() {
@@ -47,6 +51,18 @@ class BackgroundService {
       return true; // Keep message channel open for async response
     });
 
+    // Tidy up when a tab we're working in is closed
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      this.withLock(async () => {
+        const { profileVisitTabs = {}, draftCompletion } = await chrome.storage.local.get(['profileVisitTabs', 'draftCompletion']);
+        if (tabId in profileVisitTabs) {
+          delete profileVisitTabs[tabId];
+          await chrome.storage.local.set({ profileVisitTabs });
+        }
+        if (draftCompletion?.tabId === tabId) await this.endDraftCompletion('The LinkedIn tab was closed');
+      }).catch(() => {});
+    });
+
     console.log('[Background] Service worker initialized');
   }
 
@@ -83,6 +99,12 @@ class BackgroundService {
       connectionsPerRole: 3,  // Connections per role before switching
       usePersonalizedMessages: true,
       targetHiringOnly: false,  // Default to all professionals
+      warmUpEnabled: true,  // Start with a lower daily limit and build up (see shared/safety.js)
+      warmUpStartDate: null,
+      visitProfileFirst: true,  // View someone's profile before inviting them
+      doNotContact: [],  // Names, companies or profile links never to invite
+      withdrawAfterDays: 21,  // "Withdraw old invitations" age
+      messageTest: { mode: 'off', a: '', b: '' },  // A/B test of invitation notes
       // Job application settings
       jobApplicationEnabled: false,
       maxDailyApplications: 20,
@@ -269,6 +291,57 @@ class BackgroundService {
           sendResponse({ success: true });
           break;
 
+        case 'getInviteAllowance':
+          sendResponse(await this.withLock(() => this.getInviteAllowance()));
+          break;
+
+        case 'addDoNotContact':
+          sendResponse(await this.withLock(() => this.addDoNotContact(request.entry)));
+          break;
+
+        case 'markInvitationWithdrawn':
+          sendResponse({ matched: await this.withLock(() => this.markInvitationWithdrawn(request.person)) });
+          break;
+
+        case 'saveWithdrawalSummary':
+          await chrome.storage.local.set({ lastWithdrawal: { ...request.summary, date: new Date().toISOString() } });
+          sendResponse({ success: true });
+          break;
+
+        case 'openProfileVisit': {
+          const visit = await this.withLock(() => this.openProfileVisit(request.url, sender.tab));
+          // The time on the profile counts from when it has loaded
+          if (visit.tabId) await this.waitForTabLoad(visit.tabId);
+          sendResponse(visit);
+          break;
+        }
+
+        case 'closeProfileVisit':
+          await this.withLock(() => this.closeProfileVisit(request.tabId));
+          sendResponse({ success: true });
+          break;
+
+        case 'isProfileVisitTab':
+          sendResponse({ visit: await this.isProfileVisitTab(sender.tab?.id) });
+          break;
+
+        case 'startDraftCompletion':
+          sendResponse(await this.withLock(() => this.startDraftCompletion(request.applicationIds, sender.tab?.id)));
+          break;
+
+        case 'claimDraftCompletion':
+          sendResponse({ task: await this.withLock(() => this.claimDraftCompletion(sender.tab?.id)) });
+          break;
+
+        case 'draftCompletionResult':
+          sendResponse(await this.withLock(() => this.finishDraftItem(sender.tab?.id, request.result)));
+          break;
+
+        case 'cancelDraftCompletion':
+          await this.withLock(() => this.endDraftCompletion('Cancelled'));
+          sendResponse({ success: true });
+          break;
+
         case 'deleteJobApplication':
           await this.withLock(() => this.deleteJobApplication(request.applicationId));
           sendResponse({ success: true });
@@ -360,6 +433,8 @@ class BackgroundService {
       status: 'pending',
       responseDate: null,
       messageTemplate: requestData.messageTemplate || null,
+      messageVariant: ['A', 'B'].includes(requestData.messageVariant) ? requestData.messageVariant : null,
+      profileVisited: requestData.profileVisited === true,
       timeOfDay: new Date().getHours(),
       dayOfWeek: new Date().getDay()
     };
@@ -527,7 +602,7 @@ class BackgroundService {
       const sent = new Date(item.sentDate);
       if (!item.fullName || isNaN(sent)) continue;
 
-      const status = ['pending', 'accepted', 'declined'].includes(item.status) ? item.status : 'pending';
+      const status = ['pending', 'accepted', 'declined', 'withdrawn'].includes(item.status) ? item.status : 'pending';
       const responded = item.responseDate ? new Date(item.responseDate) : null;
       const request = {
         id: this.generateId(),
@@ -538,6 +613,7 @@ class BackgroundService {
         status,
         responseDate: status !== 'pending' && responded && !isNaN(responded) ? responded.toISOString() : null,
         messageTemplate: item.messageTemplate || null,
+        messageVariant: ['A', 'B'].includes(item.messageVariant) ? item.messageVariant : null,
         timeOfDay: sent.getHours(),
         dayOfWeek: sent.getDay(),
         ...(['sent', 'skipped'].includes(item.welcomeStatus) ? {
@@ -606,8 +682,9 @@ class BackgroundService {
     const totalSent = requests.length;
     const totalAccepted = countBy('accepted');
 
-    // Average response time (accepted/declined requests only)
-    const responded = requests.filter(r => r.responseDate && r.status !== 'pending');
+    // Average response time (accepted/declined requests only; a withdrawal
+    // is our own action, not a response)
+    const responded = requests.filter(r => r.responseDate && ['accepted', 'declined'].includes(r.status));
     const totalResponseTime = responded.reduce(
       (sum, r) => sum + (new Date(r.responseDate) - new Date(r.sentDate)), 0);
 
@@ -616,10 +693,220 @@ class BackgroundService {
       totalAccepted,
       totalDeclined: countBy('declined'),
       totalPending: countBy('pending'),
+      totalWithdrawn: countBy('withdrawn'),
       // Acceptance rate is accepted / total sent
       acceptanceRate: totalSent > 0 ? totalAccepted / totalSent : 0,
       avgResponseTime: responded.length > 0 ? totalResponseTime / responded.length : 0
     };
+  }
+
+  // ---- Account safety ----------------------------------------------------------
+
+  // Today's invitation limit, allowing for the warm-up. The warm-up starts the
+  // first time it's needed: from the first invitation already on record (so
+  // an established account isn't held back), otherwise today.
+  async getInviteAllowance() {
+    const settings = await this.getSettings();
+    if (Safety.warmUpEnabled(settings) && !settings.warmUpStartDate) {
+      const { requests = [] } = await this.getConnectionAnalytics();
+      const first = requests.map(r => new Date(r.sentDate)).filter(d => !isNaN(d)).sort((a, b) => a - b)[0];
+      settings.warmUpStartDate = (first || new Date()).toISOString();
+      await chrome.storage.local.set({ settings });
+    }
+    return Safety.inviteLimit(settings);
+  }
+
+  async addDoNotContact(entry) {
+    const value = String(entry || '').trim().slice(0, 300);
+    if (value.length < 2) return { added: false };
+    const settings = await this.getSettings();
+    const list = Array.isArray(settings.doNotContact) ? settings.doNotContact : [];
+    if (list.some(item => item.toLowerCase() === value.toLowerCase())) return { added: false };
+    await chrome.storage.local.set({ settings: { ...settings, doNotContact: [...list, value] } });
+    return { added: true };
+  }
+
+  // An invitation withdrawn on LinkedIn's sent page: mark the matching
+  // pending request (by profile link, else by name) as withdrawn
+  async markInvitationWithdrawn(person = {}) {
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+    const slug = Safety.profileSlug(person.profileUrl);
+    const name = Safety.normalize(person.fullName);
+    const pending = analytics.requests.filter(r => r.status === 'pending');
+
+    const request = (slug && pending.find(r => Safety.profileSlug(r.profileUrl) === slug)) ||
+                    (name && pending.find(r => Safety.normalize(r.fullName) === name));
+    if (!request) return false;
+
+    request.status = 'withdrawn';
+    request.responseDate = new Date().toISOString();
+    analytics.stats = this.computeConnectionStats(analytics.requests);
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    return true;
+  }
+
+  // ---- Profile visits before connecting ---------------------------------------
+
+  // Open a profile in a background tab next to the search page; the content
+  // script there scrolls through it until the search page closes it
+  async openProfileVisit(url, fromTab) {
+    if (!/^https:\/\/([a-z]+\.)?linkedin\.com\/in\/[^/?#]+/.test(url || '')) {
+      return { error: 'Not a LinkedIn profile link' };
+    }
+    // Record the tab before LinkedIn loads in it, so its content script
+    // knows straight away that it's only there to view the profile
+    const tab = await chrome.tabs.create({
+      url: 'about:blank',
+      active: false,
+      ...(fromTab ? { windowId: fromTab.windowId, index: fromTab.index + 1 } : {})
+    });
+    const { profileVisitTabs = {} } = await chrome.storage.local.get(['profileVisitTabs']);
+    profileVisitTabs[tab.id] = Date.now();
+    await chrome.storage.local.set({ profileVisitTabs });
+    await chrome.tabs.update(tab.id, { url });
+
+    // Never leave a visit tab open if the search page doesn't close it
+    setTimeout(() => this.withLock(() => this.closeProfileVisit(tab.id)).catch(() => {}), PROFILE_VISIT_MAX_MS);
+    return { tabId: tab.id };
+  }
+
+  // Resolves once the tab has finished loading (or after timeoutMs)
+  waitForTabLoad(tabId, timeoutMs = 20000) {
+    return new Promise(resolve => {
+      const done = () => {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      };
+      const listener = (id, info) => { if (id === tabId && info.status === 'complete') done(); };
+      const timer = setTimeout(done, timeoutMs);
+      chrome.tabs.onUpdated.addListener(listener);
+      chrome.tabs.get(tabId).then(tab => { if (tab.status === 'complete' && tab.url !== 'about:blank') done(); }).catch(done);
+    });
+  }
+
+  async closeProfileVisit(tabId) {
+    const { profileVisitTabs = {} } = await chrome.storage.local.get(['profileVisitTabs']);
+    if (!(tabId in profileVisitTabs)) return;  // only close tabs opened for a visit
+    delete profileVisitTabs[tabId];
+    await chrome.storage.local.set({ profileVisitTabs });
+    await chrome.tabs.remove(tabId).catch(() => {});
+  }
+
+  async isProfileVisitTab(tabId) {
+    const { profileVisitTabs = {} } = await chrome.storage.local.get(['profileVisitTabs']);
+    return !!tabId && tabId in profileVisitTabs;
+  }
+
+  // ---- Completing drafts with saved answers -----------------------------------
+
+  // Open each draft's job in one LinkedIn tab, in turn; the content script
+  // there claims the job, runs Easy Apply with the saved answers and reports
+  // back, then moves the tab on to the next job
+  async startDraftCompletion(applicationIds = [], returnTabId) {
+    if (!Terms.isAccepted(await this.getSettings())) {
+      throw new Error('Please accept the Terms of Use first (open the extension popup)');
+    }
+
+    const { draftCompletion } = await chrome.storage.local.get(['draftCompletion']);
+    if (draftCompletion && Date.now() - draftCompletion.lastActivity < DRAFT_RUN_TIMEOUT_MS) {
+      throw new Error('Drafts are already being completed in another tab - wait for that to finish');
+    }
+
+    const { applications = [] } = await this.getJobApplications();
+    const items = [];
+    let noLink = 0;
+    for (const id of applicationIds) {
+      const app = applications.find(a => a.id === id && a.status === 'draft');
+      if (!app) continue;
+      const url = Pipeline.jobViewUrl(app);
+      if (!url) {
+        noLink++;
+        continue;
+      }
+      items.push({ id: app.id, url, jobTitle: app.jobTitle, company: app.company });
+    }
+    if (!items.length) {
+      throw new Error(noLink ? 'These drafts have no LinkedIn job link to reopen' : 'No drafts to complete');
+    }
+
+    const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+    await chrome.storage.local.set({
+      draftCompletion: {
+        items,
+        index: 0,
+        claimedIndex: -1,
+        tabId: tab.id,
+        returnTabId: returnTabId || null,
+        results: [],
+        startedAt: Date.now(),
+        lastActivity: Date.now()
+      }
+    });
+    await chrome.tabs.update(tab.id, { url: items[0].url });
+    return { started: items.length, noLink };
+  }
+
+  // The job this tab should complete, handed out once per job so a reload
+  // can't submit it twice
+  async claimDraftCompletion(tabId) {
+    const { draftCompletion: run } = await chrome.storage.local.get(['draftCompletion']);
+    if (!run || !tabId || run.tabId !== tabId) return null;
+    if (Date.now() - run.lastActivity > DRAFT_RUN_TIMEOUT_MS) {
+      await this.endDraftCompletion('Stopped: no progress for 10 minutes');
+      return null;
+    }
+    if (run.claimedIndex >= run.index) return null;
+
+    run.claimedIndex = run.index;
+    run.lastActivity = Date.now();
+    await chrome.storage.local.set({ draftCompletion: run });
+    return { ...run.items[run.index], position: run.index + 1, total: run.items.length };
+  }
+
+  // outcome: 'applied' | 'draft' (still missing answers) | 'failed' | 'stopped'
+  async finishDraftItem(tabId, result = {}) {
+    const { draftCompletion: run } = await chrome.storage.local.get(['draftCompletion']);
+    if (!run || run.tabId !== tabId) return { next: null };
+
+    const item = run.items[run.index];
+    run.results.push({
+      id: item.id,
+      jobTitle: item.jobTitle,
+      company: item.company,
+      outcome: result.outcome || 'failed',
+      detail: String(result.detail || '').slice(0, 300)
+    });
+    run.index++;
+    run.lastActivity = Date.now();
+
+    if (result.outcome === 'stopped' || run.index >= run.items.length) {
+      await chrome.storage.local.set({ draftCompletion: run });
+      await this.endDraftCompletion(result.outcome === 'stopped' ? result.detail || 'Stopped' : null);
+      return { next: null };
+    }
+    await chrome.storage.local.set({ draftCompletion: run });
+    return { next: run.items[run.index].url };
+  }
+
+  async endDraftCompletion(reason = null) {
+    const { draftCompletion: run } = await chrome.storage.local.get(['draftCompletion']);
+    if (!run) return;
+    const count = (outcome) => run.results.filter(r => r.outcome === outcome).length;
+    await chrome.storage.local.set({
+      lastDraftCompletion: {
+        date: new Date().toISOString(),
+        applied: count('applied'),
+        stillDraft: count('draft'),
+        failed: count('failed'),
+        notReached: run.items.length - run.results.length,
+        reason,
+        results: run.results
+      }
+    });
+    await chrome.storage.local.remove('draftCompletion');
+    if (run.returnTabId) chrome.tabs.update(run.returnTabId, { active: true }).catch(() => {});
   }
 
   // Application questions the saved answers didn't cover, keyed by their
@@ -678,6 +965,14 @@ class BackgroundService {
     const result = await chrome.storage.local.get(['jobApplications']);
     const jobApps = result.jobApplications || { applications: [] };
 
+    // Completing a saved draft updates that application instead of adding another
+    const existing = applicationData.updateId && jobApps.applications.find(app => app.id === applicationData.updateId);
+    if (existing) {
+      this.applyDraftOutcome(existing, applicationData);
+      await chrome.storage.local.set({ jobApplications: jobApps });
+      return;
+    }
+
     // Applications added by hand can have an earlier applied date
     const givenDate = applicationData.appliedDate ? new Date(applicationData.appliedDate) : null;
 
@@ -697,6 +992,7 @@ class BackgroundService {
       jobUrl: applicationData.jobUrl,
       matchedRole: applicationData.matchedRole || null,
       source: applicationData.source || 'auto-apply',
+      pendingQuestions: this.sanitizeQuestions(applicationData.pendingQuestions),
       history: [],
       followUpDate: null
     };
@@ -704,6 +1000,42 @@ class BackgroundService {
     jobApps.applications.push(application);
     await chrome.storage.local.set({ jobApplications: jobApps });
     console.log('[Background] Job application saved. Total:', jobApps.applications.length);
+  }
+
+  // Questions that stopped a draft, kept so the Applications page can tell
+  // when the saved answers cover them all
+  sanitizeQuestions(questions) {
+    if (!Array.isArray(questions)) return [];
+    return questions
+      .filter(q => q && q.key && q.question)
+      .slice(0, 20)
+      .map(q => ({
+        key: String(q.key).slice(0, 500),
+        question: String(q.question).slice(0, 500),
+        type: String(q.type || 'text'),
+        options: (Array.isArray(q.options) ? q.options : []).slice(0, 25).map(String)
+      }));
+  }
+
+  // A draft that was tried again: now submitted, or still missing answers
+  applyDraftOutcome(app, data) {
+    const now = new Date().toISOString();
+    if (data.status === 'applied') {
+      app.history = [...(app.history || []),
+        { date: now, type: 'status', from: app.status, status: 'applied' },
+        { date: now, type: 'note', note: 'Completed automatically with your saved answers' }];
+      app.status = 'applied';
+      app.appliedDate = now;
+      app.notes = '';
+      app.pendingQuestions = [];
+      app.requiresCoverLetter = false;
+      if (data.salary) app.salary = data.salary;
+    } else {
+      app.notes = data.notes || app.notes;
+      app.pendingQuestions = this.sanitizeQuestions(data.pendingQuestions);
+      app.requiresCoverLetter = data.requiresCoverLetter === true;
+      app.lastAttempt = now;
+    }
   }
 
   async updateJobApplication(applicationId, updates) {

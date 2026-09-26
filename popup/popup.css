@@ -397,3 +397,6 @@ body {
 }
 .terms-banner p { margin: 4px 0 10px; color: #5f4b00; }
 .terms-banner .btn { width: 100%; }
+
+.warm-up-note { display: block; color: #0b5f59; margin-top: 2px; }
+.withdraw-controls { margin-top: 10px; }
