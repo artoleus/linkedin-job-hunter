@@ -196,6 +196,12 @@ class BackgroundService {
           sendResponse({ applications });
           break;
 
+        case 'addApplicationEvent':
+          sendResponse({
+            application: await this.withLock(() => this.addApplicationEvent(request.applicationId, request.event))
+          });
+          break;
+
         case 'importJobApplications':
           sendResponse({
             success: true,
@@ -515,6 +521,9 @@ class BackgroundService {
     const result = await chrome.storage.local.get(['jobApplications']);
     const jobApps = result.jobApplications || { applications: [] };
 
+    // Applications added by hand can have an earlier applied date
+    const givenDate = applicationData.appliedDate ? new Date(applicationData.appliedDate) : null;
+
     const application = {
       id: this.generateId(),
       jobId: applicationData.jobId,
@@ -524,11 +533,15 @@ class BackgroundService {
       salary: applicationData.salary,
       workType: applicationData.workType,
       distance: applicationData.distance,
-      appliedDate: new Date().toISOString(),
+      appliedDate: givenDate && !isNaN(givenDate) ? givenDate.toISOString() : new Date().toISOString(),
       status: applicationData.status || 'applied',
       requiresCoverLetter: applicationData.requiresCoverLetter || false,
       notes: applicationData.notes || '',
-      jobUrl: applicationData.jobUrl
+      jobUrl: applicationData.jobUrl,
+      matchedRole: applicationData.matchedRole || null,
+      source: applicationData.source || 'auto-apply',
+      history: [],
+      followUpDate: null
     };
 
     jobApps.applications.push(application);
@@ -582,7 +595,11 @@ class BackgroundService {
         status: item.status || 'applied',
         requiresCoverLetter: item.requiresCoverLetter === true,
         notes: item.notes || '',
-        jobUrl: item.jobUrl || ''
+        jobUrl: item.jobUrl || '',
+        matchedRole: item.matchedRole || null,
+        source: item.source || 'import',
+        history: this.sanitizeHistory(item.history),
+        followUpDate: /^\d{4}-\d{2}-\d{2}$/.test(item.followUpDate || '') ? item.followUpDate : null
       };
 
       const key = keyOf(application);
@@ -595,6 +612,55 @@ class BackgroundService {
     await chrome.storage.local.set({ jobApplications: jobApps });
     console.log('[Background] Imported', added, 'job applications');
     return { added, skipped: imported.length - added };
+  }
+
+  // Record something that happened to an application: a status change, a
+  // note, or a follow-up. Returns the updated application.
+  async addApplicationEvent(applicationId, event = {}) {
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+    const app = jobApps.applications.find(a => a.id === applicationId);
+    if (!app) return null;
+
+    const entry = { date: new Date().toISOString(), type: event.type };
+
+    if (event.type === 'status') {
+      const status = String(event.status || '').trim().toLowerCase();
+      if (!status || status === app.status) return app;
+      entry.status = status;
+      entry.from = app.status;
+      app.status = status;
+      // A closed application needs no reminder
+      if (status === 'rejected' || status === 'withdrawn') app.followUpDate = null;
+    } else if (event.type === 'note') {
+      const note = String(event.note || '').trim().slice(0, 2000);
+      if (!note) return app;
+      entry.note = note;
+    } else if (event.type === 'followup') {
+      entry.note = String(event.note || 'Followed up').slice(0, 2000);
+      app.followUpDate = null;
+    } else {
+      return app;
+    }
+
+    app.history = [...(app.history || []), entry];
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    return app;
+  }
+
+  // Keep only well-formed timeline entries (e.g. from an imported CSV)
+  sanitizeHistory(history) {
+    if (!Array.isArray(history)) return [];
+    return history
+      .filter(e => e && ['status', 'note', 'followup'].includes(e.type) && !isNaN(new Date(e.date)))
+      .map(e => ({
+        date: new Date(e.date).toISOString(),
+        type: e.type,
+        ...(e.status ? { status: String(e.status).toLowerCase() } : {}),
+        ...(e.from ? { from: String(e.from).toLowerCase() } : {}),
+        ...(e.note ? { note: String(e.note).slice(0, 2000) } : {})
+      }))
+      .slice(0, 200);
   }
 
   async getJobApplications() {

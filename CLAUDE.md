@@ -53,7 +53,9 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped).
 
-- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics including salary ranges extracted from job details. Supports CSV export/import (import skips duplicates) and individual application deletion.
+- **applications/applications.js**: Job applications tracker dashboard. Pipeline statuses (needs completion, applied, interviewing, offer, rejected, withdrawn) changed from the table, a per-application timeline with dated notes and an optional follow-up reminder date, a "Follow-ups due" list (after `settings.followUpDays` without an update, default 7, or on the reminder date), a "What's working" breakdown by target role and work type, adding applications made outside Auto Apply, CSV export/import (including history; import skips duplicates) and deletion. Status changes, notes and follow-ups go through the background's `addApplicationEvent`, which appends to `application.history`.
+
+- **shared/pipeline.js**: `Pipeline` status labels, follow-up rules (`followUpDue`), last-activity and outcome stats; shared by the Applications page and the popup (which shows how many follow-ups are due).
 
 - **backup-restore/backup.js**: Backup & Restore page (opened from the popup). Exports/imports settings as JSON for moving to another computer; imports never switch on scanning or automation. It is a separate page because extension popups can close when a file picker opens.
 
@@ -154,7 +156,7 @@ Add to `job-detector.js`:
 - ✅ Integration with LinkedIn's Easy Apply automation
 - ✅ Application history with timestamps and notes
 - ✅ CSV export of applications
-- Future: Add interviewing, rejected, offer statuses
+- ✅ Interviewing, offer, rejected and withdrawn statuses, follow-up reminders and outcome stats
 
 **2. ✅ Response Analytics** (COMPLETED)
 - ✅ Track connection acceptance rate

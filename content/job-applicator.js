@@ -184,9 +184,9 @@ class JobApplicator {
 
       // Check role match - use flexible keyword matching
       const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
-      const roleMatches = this.matchesTargetRoles(jobTitle, targetRoles);
+      const matchedRole = TextUtils.matchTargetRole(jobTitle, targetRoles);
 
-      if (!roleMatches) {
+      if (!matchedRole) {
         console.log('[Job Applicator] Job title does not match target roles');
         console.log('[Job Applicator] Title:', jobTitle);
         console.log('[Job Applicator] Target roles:', targetRoles);
@@ -248,6 +248,7 @@ class JobApplicator {
         matches: true,
         jobData: {
           jobTitle,
+          matchedRole,
           company,
           location,
           workType,

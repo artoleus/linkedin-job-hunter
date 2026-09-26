@@ -10,7 +10,7 @@
   <div class="container">
     <header class="header">
       <h1>💼 Job Applications Tracker</h1>
-      <p class="subtitle">Track and manage your automated job applications</p>
+      <p class="subtitle">Track every application from submission to offer, and know when to follow up</p>
     </header>
 
     <!-- Summary Stats -->
@@ -20,18 +20,39 @@
         <div class="stat-value" id="totalApplications">0</div>
       </div>
       <div class="stat-card success">
-        <div class="stat-label">Submitted</div>
-        <div class="stat-value" id="submittedApplications">0</div>
+        <div class="stat-label">Awaiting Reply</div>
+        <div class="stat-value" id="awaitingApplications">0</div>
+      </div>
+      <div class="stat-card info">
+        <div class="stat-label">Interviewing</div>
+        <div class="stat-value" id="interviewingApplications">0</div>
+      </div>
+      <div class="stat-card offer">
+        <div class="stat-label">Offers</div>
+        <div class="stat-value" id="offerApplications">0</div>
       </div>
       <div class="stat-card warning">
-        <div class="stat-label">Drafts (Need Cover Letter)</div>
+        <div class="stat-label">Needs Completion</div>
         <div class="stat-value" id="draftApplications">0</div>
       </div>
       <div class="stat-card danger">
-        <div class="stat-label">Failed</div>
-        <div class="stat-value" id="failedApplications">0</div>
+        <div class="stat-label">Follow-ups Due</div>
+        <div class="stat-value" id="followUpsDue">0</div>
       </div>
     </div>
+
+    <!-- Follow-ups -->
+    <section class="panel follow-ups" id="followUpsPanel">
+      <div class="panel-header">
+        <h2>🔔 Follow-ups due</h2>
+        <label class="inline-setting">
+          Remind me after
+          <input type="number" id="followUpDays" min="1" max="60" value="7">
+          days without an update
+        </label>
+      </div>
+      <div id="followUpsList"></div>
+    </section>
 
     <!-- Filters and Controls -->
     <div class="controls-bar">
@@ -40,9 +61,13 @@
 
         <select id="statusFilter" class="filter-select">
           <option value="all">All Statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="draft">Draft (Cover Letter)</option>
-          <option value="failed">Failed</option>
+          <option value="followup">Follow-up due</option>
+          <option value="draft">Needs completion</option>
+          <option value="applied">Applied</option>
+          <option value="interviewing">Interviewing</option>
+          <option value="offer">Offer</option>
+          <option value="rejected">Rejected</option>
+          <option value="withdrawn">Withdrawn</option>
         </select>
 
         <select id="workTypeFilter" class="filter-select">
@@ -54,11 +79,39 @@
       </div>
 
       <div class="control-buttons">
+        <button id="addBtn" class="btn btn-secondary" title="Track an application you made outside Auto Apply">＋ Add</button>
         <button id="refreshBtn" class="btn btn-secondary">↻ Refresh</button>
         <button id="importBtn" class="btn btn-secondary" title="Import applications from a CSV exported by this tool">📤 Import CSV</button>
         <button id="exportBtn" class="btn btn-primary">📥 Export CSV</button>
       </div>
     </div>
+
+    <!-- Add an application by hand -->
+    <section class="panel hidden" id="addPanel">
+      <h2>Add an application</h2>
+      <form id="addForm" class="add-grid" autocomplete="off">
+        <label>Job title *<input type="text" id="addTitle" required></label>
+        <label>Company<input type="text" id="addCompany"></label>
+        <label>Location<input type="text" id="addLocation"></label>
+        <label>Work type
+          <select id="addWorkType">
+            <option value="">Unknown</option>
+            <option value="remote">Remote</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="onsite">On-site</option>
+          </select>
+        </label>
+        <label>Applied on<input type="date" id="addDate"></label>
+        <label>Status
+          <select id="addStatus"></select>
+        </label>
+        <label class="wide">Job URL<input type="url" id="addUrl" placeholder="https://…"></label>
+        <div class="add-actions">
+          <button type="submit" class="btn btn-primary">Save application</button>
+          <button type="button" id="cancelAddBtn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </form>
+    </section>
 
     <!-- Applications Table -->
     <div class="table-container">
@@ -70,21 +123,40 @@
             <th>Work Type</th>
             <th>Salary</th>
             <th>Location</th>
-            <th>Applied Date</th>
+            <th>Applied</th>
+            <th>Last Update</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody id="applicationsTableBody">
           <tr>
-            <td colspan="8" class="no-data">No applications found</td>
+            <td colspan="9" class="no-data">No applications found</td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <!-- What's working -->
+    <section class="panel" id="insightsPanel">
+      <h2>📈 What's working</h2>
+      <p class="hint" id="insightsHint"></p>
+      <div class="insights-grid">
+        <div>
+          <h3>By target role</h3>
+          <table class="insights-table" id="roleInsights"></table>
+        </div>
+        <div>
+          <h3>By work type</h3>
+          <table class="insights-table" id="workTypeInsights"></table>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="../shared/csv.js"></script>
+  <script src="../shared/text-utils.js"></script>
+  <script src="../shared/pipeline.js"></script>
   <script src="applications.js"></script>
 </body>
 </html>
