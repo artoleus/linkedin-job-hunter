@@ -1,6 +1,6 @@
-# Installation Guide - LinkedIn Job Hunter
+# Installation Guide - JobTrail
 
-Quick step-by-step guide to install and configure the LinkedIn Job Hunter extension.
+Quick step-by-step guide to install and configure the JobTrail extension.
 
 ## Prerequisites
 
@@ -53,7 +53,7 @@ The extension needs icon files for a complete installation:
 ### 5. Pin Extension to Toolbar
 
 1. Click the puzzle piece icon in Chrome toolbar
-2. Find "LinkedIn Job Hunter"
+2. Find "JobTrail"
 3. Click the pin icon to keep it visible
 
 ## Initial Configuration
@@ -66,7 +66,7 @@ The extension needs icon files for a complete installation:
 
 ### 7. Configure Settings
 
-1. Click the LinkedIn Job Hunter extension icon
+1. Click the JobTrail extension icon (on first install, accept the Terms of Use on the welcome page that opens, or click "Review & accept" in the popup)
 2. Click "⚙️ Settings" to expand settings panel
 3. Configure your preferences:
 
@@ -91,7 +91,7 @@ The extension needs icon files for a complete installation:
 
 1. **Status Indicator**: Green dot in top-right corner of LinkedIn pages
 2. **Extension Popup**: Shows "Active" status when opened
-3. **Browser Console**: Open DevTools → Console tab, look for "LinkedIn Job Hunter initialized" message
+3. **Browser Console**: Open DevTools → Console tab, turn on "Show detailed logs" in Settings, then look for the "JobTrail initialized successfully!" message
 
 ### Test Manual Scan
 
@@ -204,4 +204,4 @@ Sales: sales, account manager, business development, revenue
 
 **Installation Complete!** 🎉
 
-You should now have LinkedIn Job Hunter running and ready to discover opportunities through your network. Remember to use it responsibly and monitor your LinkedIn account for any issues.
+You should now have JobTrail running and ready to discover opportunities through your network. Remember to use it responsibly and monitor your LinkedIn account for any issues.

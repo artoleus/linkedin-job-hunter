@@ -3,18 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LinkedIn Job Hunter</title>
+  <title>JobTrail</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <h1>🎯 Job Hunter</h1>
+      <h1>🧭 JobTrail</h1>
       <div class="status-indicator" id="statusIndicator">
         <div class="status-dot" id="statusDot"></div>
         <span id="statusText">Inactive</span>
       </div>
+    </div>
+
+    <!-- Shown until the Terms of Use are accepted -->
+    <div id="termsBanner" class="terms-banner" style="display: none;">
+      <strong>Welcome to JobTrail</strong>
+      <p>Please read and accept the Terms of Use before using the automation features.</p>
+      <button id="openWelcome" class="btn btn-primary">Review &amp; accept</button>
     </div>
 
     <!-- Controls -->
@@ -178,6 +185,14 @@
         <small>Uses LinkedIn's "Hiring" filter to target recruiters and hiring managers posting jobs</small>
       </div>
 
+      <div class="setting-group">
+        <label style="font-weight: normal;">
+          <input type="checkbox" id="debugLogging">
+          Show detailed logs (for troubleshooting)
+        </label>
+        <small>Writes step-by-step progress to the browser console (F12 → Console) on LinkedIn pages</small>
+      </div>
+
       <h4>Job Application Settings</h4>
 
       <div class="setting-group">
@@ -213,7 +228,7 @@
           </label>
           <label style="display: block; margin-bottom: 4px;">
             <input type="checkbox" id="workTypeHybrid" checked>
-            Hybrid (max 75 miles from Sittingbourne, Kent)
+            Hybrid (within the distance below)
           </label>
           <label style="display: block;">
             <input type="checkbox" id="workTypeOnsite">
@@ -221,6 +236,17 @@
           </label>
         </div>
         <small>Select which work types to apply for</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="homeTown">Your Home Town:</label>
+        <input type="text" id="homeTown" placeholder="e.g. Maidstone">
+        <small id="homeTownHint">UK town or city, used to skip hybrid jobs that are too far away</small>
+      </div>
+
+      <div class="setting-group">
+        <label for="maxHybridDistance">Max Distance for Hybrid Jobs (miles):</label>
+        <input type="number" id="maxHybridDistance" min="5" max="500" value="75">
       </div>
 
       <div class="setting-group">
@@ -249,11 +275,18 @@
 
     <!-- Footer -->
     <div class="footer">
-      <small>LinkedIn Job Hunter v1.0</small>
+      <small id="versionLabel">JobTrail</small>
+      <small class="footer-links">
+        <a href="../onboarding/welcome.html" target="_blank">Getting started</a> ·
+        <a href="../legal/terms.html" target="_blank">Terms</a> ·
+        <a href="../legal/privacy.html" target="_blank">Privacy</a>
+      </small>
     </div>
   </div>
 
+  <script src="../shared/terms.js"></script>
   <script src="../shared/pipeline.js"></script>
+  <script src="../shared/uk-places.js"></script>
   <script src="../shared/text-utils.js"></script>
   <script src="../shared/welcome-messages.js"></script>
   <script src="popup.js"></script>

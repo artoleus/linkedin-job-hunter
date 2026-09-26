@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome - JobTrail</title>
+  <link rel="stylesheet" href="../legal/legal.css">
+  <link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+<main class="doc">
+  <div class="brand">
+    <img src="../icons/icon48.png" alt="" width="48" height="48">
+    <div>
+      <h1>Welcome to JobTrail</h1>
+      <p class="meta" id="version">Job search assistant</p>
+    </div>
+  </div>
+
+  <section id="termsStep">
+    <h2>1. Before you start</h2>
+    <div class="summary">
+      <ul>
+        <li>JobTrail is an independent tool. It is <b>not made, endorsed or approved by LinkedIn</b>.</li>
+        <li><b>LinkedIn's User Agreement does not permit automated tools.</b> Using the automation features (Expand Network, Auto Apply, welcome messages, scanning) may lead LinkedIn to warn, restrict or close your account. That risk is yours.</li>
+        <li>Keep to the default daily limits, watch what it does, and stop it if LinkedIn shows a warning.</li>
+        <li>You are responsible for the answers and messages it sends for you. Only save answers that are true.</li>
+        <li>Your data stays in your own browser. Nothing is sent to us.</li>
+      </ul>
+    </div>
+    <p>Please read the <a href="../legal/terms.html" target="_blank">Terms of Use</a> and <a href="../legal/privacy.html" target="_blank">Privacy Policy</a>.</p>
+
+    <div id="acceptForm">
+      <label class="check"><input type="checkbox" id="agreeTerms"> I am 18 or over and I agree to the Terms of Use.</label>
+      <label class="check"><input type="checkbox" id="agreeRisk"> I understand LinkedIn does not permit automation and I use JobTrail's automation features at my own risk.</label>
+      <button id="acceptBtn" class="btn" disabled>Accept and continue</button>
+      <p id="acceptError" class="error" hidden></p>
+    </div>
+    <p id="acceptedNote" class="ok" hidden></p>
+  </section>
+
+  <section id="setupStep" class="locked">
+    <h2>2. Set up</h2>
+    <ol class="steps">
+      <li><b>Open the JobTrail popup</b> (puzzle-piece icon → pin JobTrail) and click <b>⚙️ Settings</b>: add your target roles, daily limits, your name, email and phone, and your home town (for the hybrid distance).</li>
+      <li><button class="link" id="openAnswers">Fill in your Application Answers</button> so Auto Apply only answers what you have told it.</li>
+      <li>Open <a href="https://www.linkedin.com/feed/" target="_blank">LinkedIn</a> and start with a manual scan or a small daily limit.</li>
+      <li>Moving to another computer later? Use <button class="link" id="openBackup">Backup &amp; Restore</button>.</li>
+    </ol>
+    <p class="meta">You can reopen this page from the popup at any time. If something doesn't work, turn on <b>Show detailed logs</b> in Settings.</p>
+  </section>
+</main>
+<script src="../shared/terms.js"></script>
+<script src="welcome.js"></script>
+</body>
+</html>

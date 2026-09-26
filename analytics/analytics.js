@@ -174,15 +174,6 @@ class AnalyticsDashboard {
         btn.textContent = 'Check Accepted Connections';
       }
     });
-
-    // Add test data button (for demonstration)
-    document.getElementById('addTestDataBtn').addEventListener('click', async () => {
-      if (confirm('Add test data to analytics? (This will add sample connection requests for demonstration)')) {
-        await this.addTestData();
-        await this.loadData();
-        this.render();
-      }
-    });
   }
 
   render() {
@@ -377,7 +368,7 @@ class AnalyticsDashboard {
         datasets: [{
           label: 'Acceptance Rate (%)',
           data: acceptanceRates,
-          backgroundColor: '#0077b5',
+          backgroundColor: '#0f766e',
           borderRadius: 4
         }]
       },
@@ -436,8 +427,8 @@ class AnalyticsDashboard {
         datasets: [{
           label: 'Requests Sent',
           data: timeStats,
-          borderColor: '#0077b5',
-          backgroundColor: 'rgba(0, 119, 181, 0.1)',
+          borderColor: '#0f766e',
+          backgroundColor: 'rgba(15, 118, 110, 0.1)',
           fill: true,
           tension: 0.4
         }]
@@ -728,62 +719,6 @@ class AnalyticsDashboard {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-  }
-
-  async addTestData() {
-    const roles = ['developer', 'software engineer', 'programmer', 'tech lead', 'engineering manager'];
-    const names = [
-      'John Smith', 'Sarah Johnson', 'Michael Brown', 'Emily Davis', 'David Wilson',
-      'Jennifer Taylor', 'James Anderson', 'Lisa Martinez', 'Robert Thomas', 'Mary Garcia',
-      'Christopher Lee', 'Patricia White', 'Daniel Harris', 'Linda Clark', 'Matthew Lewis'
-    ];
-    const statuses = ['accepted', 'pending', 'declined'];
-
-    // Generate 15 sample connection requests with varied timestamps
-    const testRequests = [];
-    const now = Date.now();
-
-    for (let i = 0; i < 15; i++) {
-      const sentDate = new Date(now - Math.random() * 7 * 24 * 60 * 60 * 1000); // Last 7 days
-      const status = statuses[Math.floor(Math.random() * statuses.length)];
-
-      let responseDate = null;
-      if (status !== 'pending') {
-        // Response within 1-4 days after sent
-        responseDate = new Date(sentDate.getTime() + (1 + Math.random() * 3) * 24 * 60 * 60 * 1000);
-      }
-
-      const requestData = {
-        targetRole: roles[Math.floor(Math.random() * roles.length)],
-        fullName: names[i],
-        profileUrl: `https://linkedin.com/in/test-profile-${i}`,
-        messageTemplate: status === 'accepted' ? 'Personalized message' : null
-      };
-
-      // Save via background script
-      await chrome.runtime.sendMessage({
-        action: 'saveConnectionRequest',
-        requestData
-      });
-
-      // If not pending, update status
-      if (status !== 'pending') {
-        // Get the request ID (it will be the timestamp)
-        await new Promise(resolve => setTimeout(resolve, 10)); // Small delay
-        const result = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
-        const savedRequest = result.analytics.requests[result.analytics.requests.length - 1];
-
-        if (savedRequest) {
-          await chrome.runtime.sendMessage({
-            action: 'updateConnectionStatus',
-            requestId: savedRequest.id,
-            status: status
-          });
-        }
-      }
-    }
-
-    alert('Test data added! Refresh to see the results.');
   }
 }
 

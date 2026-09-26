@@ -1,10 +1,12 @@
-# LinkedIn Job Hunter 🎯
+# JobTrail 🧭
 
-A Chrome browser extension that automatically discovers job opportunities through your LinkedIn network using human-like behavior patterns.
+A Chrome browser extension that helps you organise a job search on LinkedIn: find opportunities, apply with your saved answers, track applications and follow up with your network. JobTrail is independent and not affiliated with, or endorsed by, LinkedIn.
 
 ## ⚠️ Important Disclaimers
 
-**Legal & Ethical Use:** This extension is for educational and personal productivity purposes. Users are responsible for complying with LinkedIn's Terms of Service. Use responsibly and respect rate limits.
+**Terms of Use:** On first install JobTrail opens a welcome page (`onboarding/welcome.html`) where the [Terms of Use](legal/terms.html) must be accepted before any automation can start. See also the [Privacy Policy](legal/privacy.html). Placeholders marked `[...]` in both documents must be filled in before selling.
+
+**LinkedIn's rules:** LinkedIn's User Agreement does not permit automated tools. Using the automation features is at the user's own risk; use conservative limits and stop if LinkedIn shows a warning.
 
 **Detection Risk:** While designed to mimic human behavior, automated tools may still be detected. Use conservative settings and monitor your account.
 
@@ -202,7 +204,7 @@ A Chrome browser extension that automatically discovers job opportunities throug
 ### Removing Your Data
 To completely remove all data:
 1. Open Chrome Extensions (`chrome://extensions/`)
-2. Find LinkedIn Job Hunter
+2. Find JobTrail
 3. Click "Remove"
 4. All locally stored data will be deleted
 
@@ -401,7 +403,7 @@ All automation runs in content scripts injected into LinkedIn pages:
 
 ---
 
-**LinkedIn Job Hunter** - Discover opportunities through your network 🎯
+**JobTrail** - Organise your job search 🧭
 
 ## Screenshots
 
@@ -410,7 +412,7 @@ All automation runs in content scripts injected into LinkedIn pages:
 
 ## License
 
-This project is provided for educational purposes. Users are responsible for compliance with LinkedIn's Terms of Service.
+Use is governed by the [Terms of Use](legal/terms.html). Users are responsible for compliance with LinkedIn's User Agreement.
 
 ## Support
 

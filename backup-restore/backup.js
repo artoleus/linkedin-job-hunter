@@ -2,6 +2,8 @@
 
 // Settings that start automation; never switched on by an import
 const RUNTIME_FLAGS = ['scanEnabled', 'networkExpansionEnabled', 'jobApplicationEnabled'];
+// Accepting the terms is done on each computer, not copied from a backup
+const NOT_IMPORTED = [...RUNTIME_FLAGS, 'termsAccepted'];
 
 function showStatus(message, type) {
   const status = document.getElementById('status');
@@ -12,7 +14,7 @@ function showStatus(message, type) {
 async function exportSettings() {
   const { settings } = await chrome.runtime.sendMessage({ action: 'getSettings' });
   const backup = {
-    type: 'linkedin-job-hunter-settings',
+    type: 'jobtrail-settings',
     version: 1,
     exportedAt: new Date().toISOString(),
     settings
@@ -22,7 +24,7 @@ async function exportSettings() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `linkedin-job-hunter-settings-${new Date().toISOString().split('T')[0]}.json`;
+  a.download = `jobtrail-settings-${new Date().toISOString().split('T')[0]}.json`;
   a.click();
   URL.revokeObjectURL(url);
   showStatus('Settings exported.', 'ok');
@@ -41,7 +43,9 @@ async function importSettings() {
   }
 
   // Accept the wrapped backup format, or a bare settings object
-  const imported = data && data.type === 'linkedin-job-hunter-settings' ? data.settings : data;
+  // Also accepts backups made before the rename
+  const isBackup = data && ['jobtrail-settings', 'linkedin-job-hunter-settings'].includes(data.type);
+  const imported = isBackup ? data.settings : data;
   if (!imported || typeof imported !== 'object' || Array.isArray(imported)) {
     showStatus(`"${file.name}" doesn't contain any settings.`, 'error');
     return;
@@ -53,7 +57,7 @@ async function importSettings() {
   const skipped = [];
 
   for (const [key, value] of Object.entries(imported)) {
-    if (RUNTIME_FLAGS.includes(key)) continue;
+    if (NOT_IMPORTED.includes(key)) continue;
 
     // Reject values whose type doesn't match the existing setting
     const existing = current[key];

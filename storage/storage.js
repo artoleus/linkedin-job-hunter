@@ -1,4 +1,13 @@
-// Storage utility for LinkedIn Job Hunter
+// Storage utility for JobTrail
+
+// Detailed console logging is off unless "Show detailed logs" is switched on
+// in Settings; warnings and errors always show. This script loads first, so
+// the switch covers every content script.
+const logDetail = console.log.bind(console);
+let detailedLogging = false;
+console.log = (...args) => {
+  if (detailedLogging) logDetail(...args);
+};
 
 class StorageManager {
   constructor() {
@@ -13,6 +22,7 @@ class StorageManager {
           const newSettings = changes.settings.newValue;
           if (newSettings) {
             this.cache.set('settings', newSettings);
+            detailedLogging = newSettings.debugLogging === true;
           } else {
             this.cache.delete('settings');
           }
@@ -92,6 +102,7 @@ class StorageManager {
     }
 
     if (response.settings) {
+      detailedLogging = response.settings.debugLogging === true;
       console.log('[Storage] Settings received:', response.settings);
       this.cache.set('settings', response.settings);
       return response.settings;

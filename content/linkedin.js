@@ -74,7 +74,7 @@ class LinkedInJobHunter {
       }
 
       this.isInitialized = true;
-      console.log('[Job Hunter] ✅ LinkedIn Job Hunter initialized successfully!');
+      console.log('[Job Hunter] ✅ JobTrail initialized successfully!');
 
     } catch (error) {
       console.error('[Job Hunter] ❌ Initialization error:', error);
@@ -115,7 +115,7 @@ class LinkedInJobHunter {
     if (indicator) {
       indicator.style.background = this.settings.scanEnabled ? '#00a000' : '#666';
       indicator.title = this.settings.scanEnabled ?
-        'Job Hunter: Active' : 'Job Hunter: Inactive';
+        'JobTrail: Active' : 'JobTrail: Inactive';
     }
   }
 
@@ -237,6 +237,9 @@ class LinkedInJobHunter {
         console.log('[Job Hunter] No opportunities found in current feed');
       }
 
+      // Records the time of this scan for the popup's "Last Scan"
+      await this.storage.updateScanStats({});
+
     } catch (error) {
       console.error('[Job Hunter] Error scanning current page:', error);
     }
@@ -292,7 +295,7 @@ class LinkedInJobHunter {
       position: fixed;
       top: 50px;
       right: 20px;
-      background: #0077b5;
+      background: #0f766e;
       color: white;
       padding: 12px 16px;
       border-radius: 8px;
@@ -363,6 +366,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (!hunter) {
     console.error('[Job Hunter] Hunter not initialized!');
     sendResponse({ error: 'Hunter not initialized' });
+    return false;
+  }
+
+  // Nothing automated starts until the Terms of Use have been accepted
+  const starts = ['manualScan', 'expandNetwork', 'startJobApplication', 'checkAcceptedConnections'];
+  const startsScanning = request.action === 'toggleScanning' && !hunter.settings.scanEnabled;
+  if ((starts.includes(request.action) || startsScanning) && !Terms.isAccepted(hunter.settings)) {
+    sendResponse({ error: 'Please accept the Terms of Use first (open the extension popup)' });
     return false;
   }
 

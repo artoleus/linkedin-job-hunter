@@ -9,23 +9,12 @@ class JobApplicator {
       lastResetDate: null
     };
     this.isRunning = false;
-    this.homeLocation = {
-      address: '',  // User's home location - set in settings
-      lat: null,
-      lng: null
-    };
-
     this.init();
   }
 
   async init() {
     this.settings = await this.storage.getSettings();
     await this.loadDailyLimits();
-
-    // Update home location from settings
-    if (this.settings.homeLocation) {
-      this.homeLocation = this.settings.homeLocation;
-    }
   }
 
   async loadDailyLimits() {
@@ -67,8 +56,13 @@ class JobApplicator {
     return !!matched;
   }
 
+  // Read from settings each time so a home town saved in the popup applies straight away
+  get homeLocation() {
+    return this.settings?.homeLocation || {};
+  }
+
   hasHomeCoordinates() {
-    return Number.isFinite(this.homeLocation?.lat) && Number.isFinite(this.homeLocation?.lng);
+    return Number.isFinite(this.homeLocation.lat) && Number.isFinite(this.homeLocation.lng);
   }
 
   // Calculate distance between two coordinates using Haversine formula
@@ -88,80 +82,12 @@ class JobApplicator {
     return degrees * (Math.PI / 180);
   }
 
-  // Estimate location coordinates from city/region name
-  // This is a simplified version - in production, you'd use a geocoding API
+  // Coordinates for a job's location (see shared/uk-places.js).
+  // null for remote jobs; { lat: 0, lng: 0 } when the place isn't known.
   estimateLocationCoordinates(locationStr) {
-    const locationStr_lower = locationStr.toLowerCase();
-
-    // UK major cities/regions (approximate coordinates)
-    const ukLocations = {
-      // Major cities
-      'london': { lat: 51.5074, lng: -0.1278 },
-      'manchester': { lat: 53.4808, lng: -2.2426 },
-      'birmingham': { lat: 52.4862, lng: -1.8904 },
-      'leeds': { lat: 53.8008, lng: -1.5491 },
-      'liverpool': { lat: 53.4084, lng: -2.9916 },
-      'bristol': { lat: 51.4545, lng: -2.5879 },
-      'sheffield': { lat: 53.3811, lng: -1.4701 },
-      'edinburgh': { lat: 55.9533, lng: -3.1883 },
-      'glasgow': { lat: 55.8642, lng: -4.2518 },
-      'cardiff': { lat: 51.4816, lng: -3.1791 },
-      'newcastle': { lat: 54.9783, lng: -1.6178 },
-      'nottingham': { lat: 52.9548, lng: -1.1581 },
-      'southampton': { lat: 50.9097, lng: -1.4044 },
-      'portsmouth': { lat: 50.8198, lng: -1.0880 },
-      'leicester': { lat: 52.6369, lng: -1.1398 },
-      'coventry': { lat: 52.4068, lng: -1.5197 },
-      'hull': { lat: 53.7457, lng: -0.3367 },
-      'stoke': { lat: 53.0027, lng: -2.1794 },
-      'derby': { lat: 52.9225, lng: -1.4746 },
-      'plymouth': { lat: 50.3755, lng: -4.1427 },
-      'wolverhampton': { lat: 52.5864, lng: -2.1285 },
-      'reading': { lat: 51.4543, lng: -0.9781 },
-      'northampton': { lat: 52.2405, lng: -0.9027 },
-      'luton': { lat: 51.8787, lng: -0.4200 },
-      'bolton': { lat: 53.5768, lng: -2.4282 },
-      'aberdeen': { lat: 57.1497, lng: -2.0943 },
-
-      // South East England
-      'cambridge': { lat: 52.2053, lng: 0.1218 },
-      'oxford': { lat: 51.7520, lng: -1.2577 },
-      'brighton': { lat: 50.8225, lng: -0.1372 },
-      'kent': { lat: 51.2787, lng: 0.5217 },
-      'canterbury': { lat: 51.2802, lng: 1.0789 },
-      'maidstone': { lat: 51.2704, lng: 0.5227 },
-      'ashford': { lat: 51.1465, lng: 0.8750 },
-      'rochester': { lat: 51.3882, lng: 0.5046 },
-      'chatham': { lat: 51.3794, lng: 0.5299 },
-      'gillingham': { lat: 51.3889, lng: 0.5500 },
-      'tunbridge wells': { lat: 51.1320, lng: 0.2630 },
-      'guildford': { lat: 51.2362, lng: -0.5704 },
-      'slough': { lat: 51.5105, lng: -0.5950 },
-      'woking': { lat: 51.3168, lng: -0.5580 },
-      'crawley': { lat: 51.1130, lng: -0.1863 },
-      'worthing': { lat: 50.8142, lng: -0.3714 },
-      'eastbourne': { lat: 50.7684, lng: 0.2905 },
-      'hastings': { lat: 50.8543, lng: 0.5730 },
-
-      // General regions
-      'england': { lat: 52.3555, lng: -1.1743 },
-      'united kingdom': { lat: 54.5973, lng: -3.8142 },
-      'uk': { lat: 54.5973, lng: -3.8142 }
-    };
-
-    // Check for matches in location string
-    for (const [city, coords] of Object.entries(ukLocations)) {
-      if (locationStr_lower.includes(city)) {
-        return coords;
-      }
-    }
-
-    // If remote, return null (no distance check needed)
-    if (locationStr_lower.includes('remote')) {
-      return null;
-    }
-
-    // Default: assume it's far away if we can't determine
+    const place = UkPlaces.find(locationStr);
+    if (place) return { lat: place.lat, lng: place.lng };
+    if (/remote/i.test(locationStr || '')) return null;
     return { lat: 0, lng: 0 };
   }
 

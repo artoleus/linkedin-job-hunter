@@ -2,7 +2,7 @@
 
 ## Overview
 
-LinkedIn Job Hunter is designed with privacy and security as top priorities. This document outlines our security practices and how to report vulnerabilities.
+JobTrail is designed with privacy and security as top priorities. This document outlines our security practices and how to report vulnerabilities.
 
 ## Data Privacy
 
@@ -41,9 +41,8 @@ All data is stored locally on your device using Chrome's encrypted storage API. 
 ### 3. Minimal Permissions
 The extension only requests necessary permissions:
 - `storage`: To save settings and opportunities locally
-- `activeTab`: To interact with LinkedIn pages you're viewing
-- `scripting`: To inject content scripts on LinkedIn
-- `tabs`: To manage LinkedIn tabs for connection monitoring
+- `tabs`: To open and manage LinkedIn tabs (connection monitoring, welcome messages)
+- Host access to `https://*.linkedin.com/*` only, where the content scripts run
 
 ### 4. Open Source
 - All code is publicly available for audit

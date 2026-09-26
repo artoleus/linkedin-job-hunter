@@ -31,7 +31,7 @@ body {
 .header h1 {
   font-size: 18px;
   font-weight: 600;
-  color: #0077b5;
+  color: #0f766e;
 }
 
 .status-indicator {
@@ -85,13 +85,13 @@ body {
 }
 
 .btn-primary {
-  background: #0077b5;
+  background: #0f766e;
   color: white;
   flex: 1;
 }
 
 .btn-primary:hover {
-  background: #006ba6;
+  background: #0b5f59;
 }
 
 .btn-primary:disabled {
@@ -111,14 +111,14 @@ body {
 
 .btn-link {
   background: none;
-  color: #0077b5;
+  color: #0f766e;
   text-decoration: underline;
   padding: 8px 0;
   font-size: 12px;
 }
 
 .btn-link:hover {
-  color: #006ba6;
+  color: #0b5f59;
 }
 
 .btn-text {
@@ -129,7 +129,7 @@ body {
 }
 
 .btn-text:hover {
-  color: #0077b5;
+  color: #0f766e;
 }
 
 /* Stats */
@@ -157,7 +157,7 @@ body {
 
 .stat-value {
   font-weight: 600;
-  color: #0077b5;
+  color: #0f766e;
 }
 
 .stat-limit {
@@ -219,7 +219,7 @@ body {
 }
 
 .opportunity-item:hover {
-  border-color: #0077b5;
+  border-color: #0f766e;
   box-shadow: 0 2px 4px rgba(0,119,181,0.1);
 }
 
@@ -243,6 +243,9 @@ body {
   font-size: 11px;
   color: #999;
 }
+
+.footer-links { display: block; margin-top: 4px; }
+.footer-links a { color: #0f766e; }
 
 .confidence-badge {
   padding: 2px 6px;
@@ -300,7 +303,7 @@ body {
   font-size: 13px;
   margin-top: 20px;
   margin-bottom: 12px;
-  color: #0077b5;
+  color: #0f766e;
   border-top: 1px solid #e1e5e9;
   padding-top: 16px;
 }
@@ -335,7 +338,7 @@ body {
 .setting-group input:focus,
 .setting-group textarea:focus {
   outline: none;
-  border-color: #0077b5;
+  border-color: #0f766e;
 }
 
 .setting-group small {
@@ -383,3 +386,14 @@ body {
 .opportunities-list::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
+/* Terms of Use banner (first run) */
+.terms-banner {
+  background: #fff8e1;
+  border: 1px solid #f5c26b;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.terms-banner p { margin: 4px 0 10px; color: #5f4b00; }
+.terms-banner .btn { width: 100%; }

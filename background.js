@@ -1,4 +1,6 @@
-// Background service worker for LinkedIn Job Hunter
+// Background service worker for JobTrail
+
+importScripts('shared/terms.js');
 
 // A welcome message still "sending" after this long has failed
 const WELCOME_TIMEOUT_MS = 3 * 60 * 1000;
@@ -26,10 +28,15 @@ class BackgroundService {
 
   init() {
     // Listen for extension installation
-    chrome.runtime.onInstalled.addListener((details) => {
+    chrome.runtime.onInstalled.addListener(async (details) => {
       console.log('[Background] Extension installed/updated:', details.reason);
       if (details.reason === 'install') {
-        this.setupDefaultSettings();
+        await this.setupDefaultSettings();
+      }
+      // First install, or updated terms: show the welcome page to accept them
+      const settings = await this.getSettings();
+      if (!Terms.isAccepted(settings)) {
+        chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/welcome.html') });
       }
     });
 
@@ -410,6 +417,10 @@ class BackgroundService {
   // connections for them) in a new tab; the content script there picks up
   // the task, types the message and reports back
   async startWelcomeMessage(requestId, message, returnTabId) {
+    if (!Terms.isAccepted(await this.getSettings())) {
+      throw new Error('Please accept the Terms of Use first (open the extension popup)');
+    }
+
     const { pendingWelcome } = await chrome.storage.local.get(['pendingWelcome']);
     if (pendingWelcome && Date.now() - pendingWelcome.startedAt < WELCOME_TIMEOUT_MS) {
       throw new Error('Another welcome message is still being sent - wait for it to finish');

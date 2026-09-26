@@ -25,7 +25,7 @@ header {
 }
 
 header h1 {
-  color: #0077b5;
+  color: #0f766e;
   margin-bottom: 8px;
 }
 
@@ -48,7 +48,7 @@ header h1 {
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   text-align: center;
-  border-left: 4px solid #0077b5;
+  border-left: 4px solid #0f766e;
 }
 
 .stat-card.success {
@@ -64,7 +64,7 @@ header h1 {
 }
 
 .stat-card.primary {
-  border-left-color: #0077b5;
+  border-left-color: #0f766e;
 }
 
 .stat-card.info {
@@ -223,12 +223,12 @@ tbody tr:hover {
 }
 
 .btn-primary {
-  background: #0077b5;
+  background: #0f766e;
   color: white;
 }
 
 .btn-primary:hover {
-  background: #006399;
+  background: #0b5f59;
 }
 
 .btn-secondary {
@@ -267,7 +267,7 @@ tbody tr:hover {
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   margin-bottom: 30px;
-  border-left: 4px solid #0077b5;
+  border-left: 4px solid #0f766e;
 }
 
 .section-header {
@@ -294,7 +294,7 @@ tbody tr:hover {
 
 .welcome-item { border-top: 1px solid #eee; padding: 14px 0; }
 .welcome-header { margin-bottom: 8px; font-size: 14px; }
-.welcome-header a { color: #0077b5; font-weight: 600; text-decoration: none; }
+.welcome-header a { color: #0f766e; font-weight: 600; text-decoration: none; }
 .welcome-header a:hover { text-decoration: underline; }
 .welcome-meta { color: #888; font-size: 13px; }
 
@@ -310,6 +310,6 @@ tbody tr:hover {
 }
 
 .welcome-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.welcome-status { color: #0077b5; font-size: 13px; }
+.welcome-status { color: #0f766e; font-size: 13px; }
 .welcome-error { color: #d93025; font-size: 13px; }
 .btn.small { padding: 6px 12px; font-size: 13px; }

@@ -1,4 +1,4 @@
-// LinkedIn Job Hunter Popup Controller
+// JobTrail Popup Controller
 
 class PopupController {
   constructor() {
@@ -12,6 +12,8 @@ class PopupController {
 
   async init() {
     try {
+      document.getElementById('versionLabel').textContent = `JobTrail v${chrome.runtime.getManifest().version}`;
+
       // Get current active tab
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       this.currentTab = tabs[0];
@@ -25,6 +27,7 @@ class PopupController {
       // Load data and setup UI
       await this.loadData();
       this.setupEventListeners();
+      this.applyTermsGate();
       this.updateUI();
       // Fill the settings form once; the periodic refresh never touches it,
       // so unsaved edits aren't wiped while typing
@@ -56,12 +59,17 @@ class PopupController {
   showNotLinkedInMessage() {
     document.querySelector('.container').innerHTML = `
       <div class="not-linkedin">
-        <h2>🎯 LinkedIn Job Hunter</h2>
-        <p>This extension only works on LinkedIn.com</p>
-        <p>Please navigate to LinkedIn to use the job hunter.</p>
+        <h2>🧭 JobTrail</h2>
+        <p>JobTrail's controls work on LinkedIn.com</p>
+        <p>Please open LinkedIn to use JobTrail.</p>
         <a href="https://www.linkedin.com" target="_blank" class="btn btn-primary">
           Open LinkedIn
         </a>
+        <p class="footer-links">
+          <a href="../onboarding/welcome.html" target="_blank">Getting started</a> ·
+          <a href="../legal/terms.html" target="_blank">Terms</a> ·
+          <a href="../legal/privacy.html" target="_blank">Privacy</a>
+        </p>
       </div>
     `;
   }
@@ -75,6 +83,7 @@ class PopupController {
       // Load opportunities directly from background script
       const opportunitiesResponse = await chrome.runtime.sendMessage({ action: 'getOpportunities' });
       this.opportunities = opportunitiesResponse.opportunities || [];
+      ({ scanStats: this.scanStats } = await chrome.storage.local.get('scanStats'));
 
       // Try to get status from content script (may fail if page not loaded)
       const statusResponse = await this.sendMessageToContentScript('getStatus');
@@ -109,6 +118,7 @@ class PopupController {
 
       const opportunitiesResponse = await chrome.runtime.sendMessage({ action: 'getOpportunities' });
       this.opportunities = opportunitiesResponse.opportunities || [];
+      ({ scanStats: this.scanStats } = await chrome.storage.local.get('scanStats'));
 
       // Try to get live status from content script
       const statusResponse = await this.sendMessageToContentScript('getStatus');
@@ -195,6 +205,22 @@ class PopupController {
     });
   }
 
+  // Until the Terms of Use are accepted, the automation buttons are disabled
+  // and a banner links to the welcome page
+  applyTermsGate() {
+    const accepted = Terms.isAccepted(this.settings);
+    document.getElementById('termsBanner').style.display = accepted ? 'none' : 'block';
+    for (const id of ['toggleScanning', 'manualScan', 'expandNetwork', 'startJobApplication']) {
+      const button = document.getElementById(id);
+      if (!accepted) {
+        button.disabled = true;
+        button.title = 'Accept the Terms of Use first';
+      }
+    }
+    document.getElementById('openWelcome').onclick = () =>
+      chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/welcome.html') });
+  }
+
   // Things waiting for the user, shown next to the page links
   async updateReminders() {
     try {
@@ -246,7 +272,7 @@ class PopupController {
       toggleText.textContent = 'Start Hunting';
     }
 
-    toggleBtn.disabled = isScanning;
+    toggleBtn.disabled = isScanning || !Terms.isAccepted(this.settings);
   }
 
   updateStats() {
@@ -257,8 +283,9 @@ class PopupController {
     document.getElementById('dailyLimit').textContent = this.settings.maxProfilesPerDay || 80;
     document.getElementById('opportunitiesCount').textContent = this.opportunities.length;
     
-    const lastScan = dailyLimits.lastResetDate;
-    document.getElementById('lastScan').textContent = 
+    // lastResetDate is the daily-limit reset (midnight), not a scan
+    const lastScan = this.scanStats?.lastScanDate;
+    document.getElementById('lastScan').textContent =
       lastScan ? this.formatDate(lastScan) : 'Never';
   }
 
@@ -327,6 +354,10 @@ class PopupController {
     document.getElementById('workTypeHybrid').checked = workTypes.includes('hybrid');
     document.getElementById('workTypeOnsite').checked = workTypes.includes('onsite');
 
+    document.getElementById('debugLogging').checked = this.settings.debugLogging === true;
+    document.getElementById('homeTown').value = this.settings.homeLocation?.address || '';
+    document.getElementById('maxHybridDistance').value = this.settings.maxHybridDistance || 75;
+    this.showHomeTownStatus();
     document.getElementById('autoFillName').value = this.settings.autoFillName || '';
     document.getElementById('autoFillEmail').value = this.settings.autoFillEmail || '';
     document.getElementById('autoFillPhone').value = this.settings.autoFillPhone || '';
@@ -358,7 +389,7 @@ class PopupController {
             expandBtn.disabled = true;
             expandBtn.textContent = 'Daily Limit Reached';
           } else {
-            expandBtn.disabled = false;
+            expandBtn.disabled = !Terms.isAccepted(this.settings);
             expandBtn.textContent = 'Expand Network (3-5)';
           }
         }
@@ -556,7 +587,7 @@ class PopupController {
             startBtn.disabled = true;
             startBtn.textContent = 'Daily Limit Reached';
           } else {
-            startBtn.disabled = false;
+            startBtn.disabled = !Terms.isAccepted(this.settings);
             startBtn.textContent = 'Auto Apply to Jobs';
           }
         }
@@ -609,6 +640,9 @@ class PopupController {
         minSalary: this.readNumber('minSalary', null),
         maxSalary: this.readNumber('maxSalary', null),
         workTypes: workTypes,
+        homeLocation: this.readHomeLocation(),
+        debugLogging: document.getElementById('debugLogging').checked,
+        maxHybridDistance: this.readNumber('maxHybridDistance', 75),
         autoFillName: document.getElementById('autoFillName').value.trim(),
         autoFillEmail: document.getElementById('autoFillEmail').value.trim(),
         autoFillPhone: document.getElementById('autoFillPhone').value.trim()
@@ -664,18 +698,18 @@ class PopupController {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>LinkedIn Job Hunter - All Opportunities</title>
+        <title>JobTrail - All Opportunities</title>
         <style>
           body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
           .opportunity { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
-          .opportunity h3 { margin: 0 0 10px 0; color: #0077b5; }
+          .opportunity h3 { margin: 0 0 10px 0; color: #0f766e; }
           .meta { color: #666; font-size: 14px; }
-          .confidence { background: #e7f3ff; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+          .confidence { background: #e6f4f2; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
           .content { margin: 10px 0; font-size: 14px; }
         </style>
       </head>
       <body>
-        <h1>🎯 LinkedIn Job Hunter - All Opportunities</h1>
+        <h1>🧭 JobTrail - All Opportunities</h1>
         <p>Found ${opportunities.length} job opportunities</p>
         ${opportunities.map(opp => `
           <div class="opportunity">
@@ -747,6 +781,28 @@ class PopupController {
       return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
     } catch {
       return '';
+    }
+  }
+
+  // Home town -> coordinates for the hybrid distance check (null if not recognised)
+  readHomeLocation() {
+    const address = document.getElementById('homeTown').value.trim();
+    const place = address ? UkPlaces.find(address) : null;
+    return { address, lat: place ? place.lat : null, lng: place ? place.lng : null };
+  }
+
+  showHomeTownStatus() {
+    const hint = document.getElementById('homeTownHint');
+    const home = this.settings.homeLocation || {};
+    if (!home.address) {
+      hint.textContent = 'UK town or city, used to skip hybrid jobs that are too far away';
+      hint.style.color = '';
+    } else if (Number.isFinite(home.lat)) {
+      hint.textContent = `✓ Found ${home.address}`;
+      hint.style.color = '#00802b';
+    } else {
+      hint.textContent = `"${home.address}" isn't recognised - try the nearest larger town. Until then the distance check is skipped.`;
+      hint.style.color = '#b45309';
     }
   }
 

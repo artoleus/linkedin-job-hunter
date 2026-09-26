@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Chrome Manifest V3 browser extension that automatically discovers job opportunities through LinkedIn by scanning feeds, profiles, and company updates. The extension mimics human-like behavior patterns to avoid detection while staying within conservative rate limits.
+This is JobTrail (formerly LinkedIn Job Hunter), a Chrome Manifest V3 browser extension that automatically discovers job opportunities through LinkedIn by scanning feeds, profiles, and company updates. The extension mimics human-like behavior patterns to avoid detection while staying within conservative rate limits.
 
 **Tech Stack:**
 - Vanilla JavaScript (ES6+)
@@ -24,9 +24,9 @@ content scripts (linkedin.js) → storage.js → background.js
 
 **Content Script Loading Order (important):**
 The manifest.json loads content scripts in a specific sequence:
-1. `storage/storage.js` - Must load first (provides StorageManager class)
-2. `content/job-detector.js` - Second (provides JobDetector class)
-3. `content/network-crawler.js` - Third (provides NetworkCrawler class)
+1. `storage/storage.js` - Must load first (provides StorageManager class and the console.log gate)
+2. `shared/terms.js`, `shared/text-utils.js`, `shared/answer-bank.js`, `shared/uk-places.js` - shared helpers
+3. `content/job-detector.js`, `network-crawler.js`, `network-expander.js`, `connection-monitor.js`, `job-applicator.js`, `welcome-messenger.js` - feature classes
 4. `content/linkedin.js` - Last (orchestrates everything, depends on above classes)
 
 Each script exposes classes via `window.*` globals for cross-script communication.
@@ -45,7 +45,7 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/network-expander.js**: Automated network expansion system that sends personalized connection requests. Features role rotation, random selection, human-like typing, configurable daily limits (default 30/day), and context-aware messaging for hiring managers vs general networking. Runs in automated mode cycling through all target roles until daily limit reached. Tracks connection analytics for performance monitoring.
 
-- **storage/storage.js**: Wrapper around chrome.runtime.sendMessage that provides async/await interface to background service worker. Includes in-memory cache for settings.
+- **storage/storage.js**: Wrapper around chrome.runtime.sendMessage that provides async/await interface to background service worker. Includes in-memory cache for settings. Also silences `console.log` in content scripts unless `settings.debugLogging` is on ("Show detailed logs" in the popup settings); warnings and errors always show.
 
 - **popup/popup.js**: UI controller for extension popup. Communicates with both background script (for storage) and content script (for real-time status). Updates UI every 5 seconds. Includes controls for job application automation and network expansion.
 
@@ -69,6 +69,16 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **shared/text-utils.js**: `TextUtils` shared by content scripts and pages: role matching (`matchTargetRole`), fuzzy name matching, headline → job title, industry guessing, and de-duplicating LinkedIn's repeated screen-reader text.
 
+- **shared/terms.js**: `Terms.VERSION` and `Terms.isAccepted(settings)`. Automation (scanning, Expand Network, Auto Apply, connection checks, welcome messages) is refused by the content script, the background and the popup until `settings.termsAccepted.version` matches. Bump `VERSION` when legal/terms.html changes materially so users re-accept. Uses `globalThis` because the background service worker loads it with `importScripts`.
+
+- **onboarding/welcome.html / welcome.js**: First-run page, opened by the background on install (or when the terms version changes). Two checkboxes then "Accept" saves `settings.termsAccepted = { version, date }`, followed by a setup checklist. Linked from the popup footer and its terms banner.
+
+- **legal/terms.html, legal/privacy.html**: UK Terms of Use and Privacy Policy. `[...]` placeholders (business name, address, support email, payment provider) must be filled in before selling. Not legal advice; have them reviewed.
+
+- **shared/uk-places.js**: `UkPlaces.find(text)` looks up approximate coordinates for UK towns/regions (offline list), and `distanceMiles`. The popup uses it to store `settings.homeLocation = {address, lat, lng}` from the "Home town" field; the job applicator uses it for the hybrid distance check (`settings.maxHybridDistance`, default 75). Unknown places are allowed through rather than rejected.
+
+- **docs/brand/**: the pixel-art icon (`jobtrail-icon-256.png`) and `make-icons.js`, which draws the 16×16 design and writes icons/icon16/32/48/128.png.
+
 - **shared/csv.js**: `CsvUtils` shared by the dashboards: CSV writing (with formula-injection guard), parsing (quoted cells, BOM, semicolon delimiters) and date parsing (ISO or UK DD/MM/YYYY as re-saved by Excel).
 
 ## Development
@@ -76,14 +86,14 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 **Testing:**
 1. Load extension in Chrome: `chrome://extensions/` → Developer mode → Load unpacked
 2. Navigate to `https://www.linkedin.com`
-3. Open browser DevTools → Console to see extension logs
+3. Turn on "Show detailed logs" in the popup settings, then open browser DevTools → Console to see extension logs
 4. Test features through popup interface
 
 **No Build Process:**
 Extension runs directly from source. No compilation, bundling, or transpilation required.
 
 **Debugging:**
-- Content script logs: DevTools Console on LinkedIn page
+- Content script logs: DevTools Console on LinkedIn page (needs "Show detailed logs" on; otherwise only warnings/errors appear)
 - Background script logs: `chrome://extensions/` → extension details → Service worker → inspect
 - Popup logs: Right-click extension icon → Inspect popup
 
@@ -119,9 +129,7 @@ Opportunities stored with fields: `id`, `type`, `source`, `title`, `company`, `a
 ## Extension Permissions
 
 - `storage`: Chrome Storage API for settings and opportunities
-- `activeTab`: Access to active LinkedIn tab
-- `scripting`: Dynamic script injection
-- `tabs`: Query and manage browser tabs for connection monitoring
+- `tabs`: Query and manage browser tabs for connection monitoring and welcome messages
 - `host_permissions`: `https://*.linkedin.com/*` only
 
 ## Important Constraints
