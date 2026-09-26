@@ -11,7 +11,8 @@ class NetworkExpander {
     };
     this.isRunning = false;
 
-    this.init();
+    // Settings load asynchronously; the expansion flow awaits this
+    this.ready = this.init();
   }
 
   async init() {
@@ -99,6 +100,8 @@ class NetworkExpander {
   generatePersonalizedMessage(profileData, maxLength = 300) {
     // Different templates for hiring managers vs general networking
     const isHiringFocused = this.settings.targetHiringOnly;
+    // Just the job title from the headline, e.g. "Senior IT Manager"
+    const role = this.shortRole(profileData.title);
 
     let templates;
 
@@ -113,7 +116,7 @@ class NetworkExpander {
 
         `Hello ${profileData.firstName}, I came across your profile while researching professionals in the recruiting field. I'm currently exploring new career opportunities and would appreciate the chance to connect with you.`,
 
-        `Hi ${profileData.firstName}, I noticed you're hiring ${profileData.title ? 'for ' + profileData.title + ' roles' : 'in the sector'}. I'm actively seeking new opportunities and would value the chance to connect and discuss openings you may have.`
+        `Hi ${profileData.firstName}, I noticed you're hiring ${role ? 'for ' + role + ' roles' : 'in the sector'}. I'm actively seeking new opportunities and would value the chance to connect and discuss openings you may have.`
       ];
     } else {
       // Templates for general professional networking - shows you're open to opportunities
@@ -124,7 +127,7 @@ class NetworkExpander {
 
         `Hi ${profileData.firstName}, I'm building my network with professionals in ${profileData.industry || 'the industry'} and am open to new opportunities. I would be delighted to connect and engage with you.`,
 
-        `Hello ${profileData.firstName}, I've been reaching out to ${profileData.title ? profileData.title + 's' : 'professionals'} to build connections as I explore my next career move. It would be great to connect with you.`,
+        `Hello ${profileData.firstName}, I've been reaching out to ${role ? 'people in ' + role + ' roles' : 'professionals'} to build connections as I explore my next career move. It would be great to connect with you.`,
 
         `Hi ${profileData.firstName}, I'm connecting with talented professionals in ${profileData.industry || 'this field'} and exploring new opportunities. I would appreciate the chance to connect and learn about your work.`
       ];
@@ -140,20 +143,39 @@ class NetworkExpander {
     return fitting[Math.floor(Math.random() * fitting.length)];
   }
 
+  // "Senior IT Manager at Acme Ltd | ISO 27001" -> "Senior IT Manager".
+  // Returns '' when the headline doesn't reduce to a short job title.
+  shortRole(headline) {
+    const role = (headline || '').split(/\s+(?:at|@)\s+|\s*[|,•·–—/]\s*|\s+-\s+/i)[0].trim();
+    return role.length > 0 && role.length <= 40 ? role : '';
+  }
+
+  containsWord(text, word) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(text);
+  }
+
   guessIndustry(title, company) {
-    const keywords = {
-      'software': ['developer', 'engineer', 'programmer', 'software', 'tech'],
-      'marketing': ['marketing', 'growth', 'brand', 'digital marketing'],
-      'sales': ['sales', 'account', 'business development'],
-      'design': ['designer', 'ux', 'ui', 'creative'],
-      'product': ['product', 'pm', 'product manager'],
-      'data': ['data', 'analyst', 'analytics', 'scientist']
-    };
+    // Checked in order, most specific first ("Security Engineer" is
+    // cybersecurity, not software; "AI Governance" is AI, not GRC)
+    const keywords = [
+      ['AI', ['ai', 'artificial intelligence', 'machine learning', 'ml']],
+      ['cybersecurity', ['security', 'cyber', 'ciso', 'grc', 'governance', 'risk', 'compliance', '27001', 'infosec']],
+      ['IT', ['it', 'infrastructure', 'linux', 'sysadmin', 'systems administrator', 'devops', 'cloud', 'automation']],
+      ['software', ['developer', 'engineer', 'programmer', 'software', 'tech']],
+      ['marketing', ['marketing', 'growth', 'brand', 'digital marketing']],
+      ['sales', ['sales', 'account', 'business development']],
+      ['design', ['designer', 'ux', 'ui', 'creative']],
+      ['product', ['product', 'pm', 'product manager']],
+      ['data', ['data', 'analyst', 'analytics', 'scientist']]
+    ];
 
     const combined = `${title} ${company}`.toLowerCase();
+    // Short keywords must be whole words ("it" shouldn't match "security")
+    const matches = word => word.length <= 3 ? this.containsWord(combined, word) : combined.includes(word);
 
-    for (const [industry, words] of Object.entries(keywords)) {
-      if (words.some(word => combined.includes(word))) {
+    for (const [industry, words] of keywords) {
+      if (words.some(matches)) {
         return industry;
       }
     }
@@ -167,7 +189,8 @@ class NetworkExpander {
     const maxProfileViews = this.settings.maxDailyProfileViews || 60;
 
     return this.dailyLimits.invitesSent >= maxInvites ||
-           this.dailyLimits.profilesViewed >= maxProfileViews;
+           this.dailyLimits.profilesViewed >= maxProfileViews ||
+           this.dailyLimits.linkedInLimitHit === true;
   }
 
   // Human-like delay
@@ -218,19 +241,97 @@ class NetworkExpander {
     return buttons;
   }
 
-  // The invite dialog opened by a Connect click (falls back to the whole
-  // document so behaviour degrades gracefully if LinkedIn changes the markup)
-  getInviteDialog() {
-    return document.querySelector('[role="dialog"], .artdeco-modal') || document;
+  // Poll until check() returns something truthy, or give up after timeoutMs.
+  // LinkedIn renders pop-ups asynchronously, so fixed delays alone are unreliable.
+  async waitFor(check, timeoutMs = 6000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const result = check();
+      if (result) return result;
+      await new Promise(resolve => setTimeout(resolve, 150 + Math.random() * 100));
+    }
+    return check() || null;
   }
 
-  // Close a half-finished invite dialog so it doesn't block the next profile
-  dismissInviteDialog() {
-    const dismissBtn = document.querySelector(
-      '[role="dialog"] button[aria-label*="Dismiss"], .artdeco-modal__dismiss');
+  // Search the page plus LinkedIn's shadow-DOM modal layer (used by newer pages)
+  queryAllDeep(selector) {
+    const roots = [document];
+    const interop = document.querySelector('#interop-outlet');
+    if (interop?.shadowRoot) roots.push(interop.shadowRoot);
+    return roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
+  }
+
+  isVisible(el) {
+    return !!el && el.getClientRects().length > 0;
+  }
+
+  // The messaging panel and search-filter pop-overs also use role="dialog",
+  // and messaging has its own "Send" button, so never treat them as the invite
+  isOutsideInvite(el) {
+    return !!el.closest('#msg-overlay, .msg-overlay-container, [class*="msg-overlay"], [class*="msg-form"]');
+  }
+
+  // Find the visible invitation pop-up by the controls only it contains
+  findInviteDialog() {
+    const markers = this.queryAllDeep(
+      'button[aria-label*="Add a note"], button[aria-label*="Send without a note"], ' +
+      'textarea#custom-message, textarea[name="message"], ' +
+      'button[aria-label*="Send invitation"], button[aria-label*="Send now"]');
+
+    for (const marker of markers) {
+      if (!this.isVisible(marker) || this.isOutsideInvite(marker)) continue;
+      return marker.closest('[role="dialog"], [role="alertdialog"], .artdeco-modal') ||
+             marker.closest('#artdeco-modal-outlet') ||
+             marker.parentElement;
+    }
+    return null;
+  }
+
+  findNoteBox() {
+    return this.queryAllDeep('textarea#custom-message, textarea[name="message"]')
+      .find(el => this.isVisible(el) && !this.isOutsideInvite(el)) || null;
+  }
+
+  // Visible buttons inside the invite pop-up
+  dialogButtons(dialog) {
+    return Array.from(dialog.querySelectorAll('button')).filter(btn => this.isVisible(btn));
+  }
+
+  findAddNoteButton(dialog) {
+    return this.dialogButtons(dialog).find(btn =>
+      (btn.getAttribute('aria-label') || btn.textContent).trim().toLowerCase().startsWith('add a note'));
+  }
+
+  // withNote: the note's "Send" button; otherwise "Send without a note"/"Send now"
+  findSendButton(dialog, withNote) {
+    const buttons = this.dialogButtons(dialog);
+    const label = btn => (btn.getAttribute('aria-label') || '').toLowerCase();
+    const text = btn => btn.textContent.trim().toLowerCase();
+
+    if (withNote) {
+      return buttons.find(btn => label(btn).startsWith('send') && !label(btn).includes('without')) ||
+             buttons.find(btn => text(btn) === 'send');
+    }
+    return buttons.find(btn => label(btn).includes('send without a note')) ||
+           buttons.find(btn => text(btn) === 'send without a note') ||
+           buttons.find(btn => ['send now', 'send invitation'].some(l => label(btn).includes(l))) ||
+           buttons.find(btn => text(btn) === 'send');
+  }
+
+  // Detect LinkedIn's invitation-limit warning so we stop instead of retrying
+  detectInvitationLimit() {
+    return this.queryAllDeep('[role="dialog"], [role="alertdialog"], .artdeco-modal')
+      .some(el => this.isVisible(el) && !this.isOutsideInvite(el) &&
+                  /invitation limit|weekly limit|reached the (weekly|monthly) limit/i.test(el.textContent));
+  }
+
+  // Close an unfinished invite pop-up so it doesn't block the next profile
+  dismissInviteDialog(dialog = this.findInviteDialog()) {
+    const dismissBtn = dialog && Array.from(dialog.querySelectorAll('button[aria-label="Dismiss"], .artdeco-modal__dismiss'))
+      .find(btn => this.isVisible(btn));
     if (dismissBtn) {
       dismissBtn.click();
-      console.log('[Network Expander] Dismissed unfinished invite dialog');
+      console.log('[Network Expander] Closed unfinished invite pop-up');
     }
   }
 
@@ -262,70 +363,126 @@ class NetworkExpander {
       // Greet by first name when known; analytics records 'Unknown' otherwise
       // (a placeholder like "there" would later fuzzy-match unrelated page text)
       const firstName = fullName ? fullName.split(' ')[0] : 'there';
+      const displayName = fullName || '(unknown name)';
 
-      console.log('[Network Expander] Preparing to connect with:', fullName || '(unknown name)');
+      console.log('[Network Expander] Preparing to connect with:', displayName);
 
       const industry = this.guessIndustry(title, company);
       const profileInfo = { fullName, firstName, title, company, industry };
 
       console.log('[Network Expander] Profile info:', profileInfo);
 
-      // Click connect
+      // Click connect and wait for the invitation pop-up to render
       connectBtn.click();
-      await this.humanDelay(1000, 2000);
+      let dialog = await this.waitFor(() => this.findInviteDialog(), 8000);
+
+      if (!dialog) {
+        // Some accounts send the invite immediately, with no pop-up
+        const nowPending = /pending/i.test(`${connectBtn.textContent} ${connectBtn.getAttribute('aria-label') || ''}`);
+        if (nowPending) {
+          console.log('[Network Expander] ✅ Sent request (no pop-up shown) to:', displayName);
+          this.dailyLimits.invitesSent++;
+          this.saveDailyLimits();
+          await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, null);
+          return true;
+        }
+
+        if (this.detectInvitationLimit()) {
+          console.log('[Network Expander] 🛑 LinkedIn reports an invitation limit - stopping for today');
+          this.dailyLimits.linkedInLimitHit = true;
+          this.saveDailyLimits();
+          this.stopExpanding('LinkedIn invitation limit');
+        } else {
+          console.log('[Network Expander] ⚠️ Invite pop-up did not appear for', displayName, '- skipping');
+        }
+        return false;
+      }
+
+      // Pause as a person would while reading the pop-up
+      await this.humanDelay(800, 1800);
 
       let message = null;
 
-      if (withMessage && this.settings.usePersonalizedMessages) {
-        // Try to find "Add a note" button
-        await this.humanDelay(500, 1000);
-
-        const addNoteBtn = this.getInviteDialog().querySelector('button[aria-label*="Add a note"]');
+      // Treat a missing setting as "on", matching the checkbox default in the popup
+      if (withMessage && this.settings.usePersonalizedMessages !== false) {
+        const addNoteBtn = this.findAddNoteButton(dialog);
 
         if (addNoteBtn) {
           addNoteBtn.click();
-          await this.humanDelay(500, 1500);
-
-          // Find message textarea
-          const dialog = this.getInviteDialog();
-          const messageBox = dialog.querySelector('textarea[name="message"]') ||
-                            dialog.querySelector('#custom-message');
+          const messageBox = await this.waitFor(() => this.findNoteBox(), 6000);
 
           if (messageBox) {
             const maxLength = messageBox.maxLength > 0 ? messageBox.maxLength : 300;
             message = this.generatePersonalizedMessage(profileInfo, maxLength);
 
+            await this.humanDelay(500, 1200);
+            console.log('[Network Expander] ✍️ Typing note to', displayName);
+
             // Type message character by character (more human-like)
             await this.typeMessage(messageBox, message);
 
             await this.humanDelay(1000, 2000);
+          } else {
+            console.log('[Network Expander] ⚠️ Note box did not appear (LinkedIn may be limiting personalised notes on your account) - sending without a note');
           }
+        } else {
+          console.log('[Network Expander] ⚠️ No "Add a note" option in the invite pop-up - sending without a note');
         }
       }
 
-      // Find the send button inside the invite dialog only, so we never click
-      // an unrelated "Send" button elsewhere on the page
-      const dialog = this.getInviteDialog();
-      const sendBtn = dialog.querySelector('button[aria-label*="Send"], button[aria-label*="Done"]') ||
-                     Array.from(dialog.querySelectorAll('button'))
-                       .find(btn => btn.textContent.trim().toLowerCase().startsWith('send'));
+      // The pop-up re-renders after "Add a note", so look it up again
+      dialog = this.findInviteDialog() || dialog;
 
-      if (sendBtn && !sendBtn.disabled) {
-        sendBtn.click();
-        console.log(`[Network Expander] ✅ Sent ${message ? 'personalised ' : ''}request to:`, fullName || '(unknown name)');
+      // Find the send button inside the invite pop-up only, waiting for LinkedIn
+      // to enable it once it has registered the typed note
+      let sendBtn = await this.waitFor(() => {
+        const btn = this.findSendButton(dialog, !!message);
+        return btn && !btn.disabled ? btn : null;
+      }, 5000);
 
-        this.dailyLimits.invitesSent++;
-        this.saveDailyLimits();
-
-        // Save to analytics
-        await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, message);
-
-        return true;
+      if (!sendBtn && message) {
+        // The note didn't register (or notes are blocked): fall back to no note
+        // rather than leaving the pop-up open
+        console.log('[Network Expander] ⚠️ Send stayed disabled after typing the note - trying without a note');
+        message = null;
+        sendBtn = this.findSendButton(dialog, false);
+        if (sendBtn?.disabled) sendBtn = null;
       }
 
-      console.log('[Network Expander] ⚠️ Send button not found or disabled');
-      this.dismissInviteDialog();
-      return false;
+      if (!sendBtn) {
+        console.log('[Network Expander] ⚠️ Send button not found in the invite pop-up');
+        this.dismissInviteDialog(dialog);
+        return false;
+      }
+
+      sendBtn.click();
+
+      // Confirm the invitation pop-up closed, i.e. LinkedIn accepted the invite
+      const closed = await this.waitFor(() => !this.findInviteDialog(), 6000);
+      if (!closed) {
+        const needsEmail = dialog.querySelector('input[type="email"], input[name*="email"]');
+        console.log('[Network Expander] ⚠️ Invite pop-up stayed open after Send' +
+                    (needsEmail ? ' (LinkedIn requires this person\'s email address)' : '') + ' - skipping');
+        this.dismissInviteDialog(dialog);
+        return false;
+      }
+
+      if (this.detectInvitationLimit()) {
+        console.log('[Network Expander] 🛑 LinkedIn reports an invitation limit - stopping for today');
+        this.dailyLimits.linkedInLimitHit = true;
+        this.saveDailyLimits();
+        this.stopExpanding('LinkedIn invitation limit');
+      }
+
+      console.log(`[Network Expander] ✅ Sent ${message ? 'personalised ' : ''}request to:`, displayName);
+
+      this.dailyLimits.invitesSent++;
+      this.saveDailyLimits();
+
+      // Save to analytics
+      await this.saveConnectionAnalytics(fullName || 'Unknown', profileUrl, message);
+
+      return true;
 
     } catch (error) {
       console.error('[Network Expander] Error sending connection:', error);
@@ -338,12 +495,17 @@ class NetworkExpander {
   async typeMessage(element, message) {
     element.focus();
     element.value = '';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
 
-    for (let i = 0; i < message.length; i++) {
-      element.value += message[i];
-
-      // Trigger input event so React/Vue detects the change
-      element.dispatchEvent(new Event('input', { bubbles: true }));
+    for (const char of message) {
+      // insertText behaves like real typing, firing the input events LinkedIn
+      // listens for; fall back to setting the value directly
+      const inserted = document.activeElement === element &&
+                       document.execCommand('insertText', false, char);
+      if (!inserted) {
+        element.value += char;
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
 
       // Random typing speed (50-150ms per character)
       await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 100));
@@ -353,6 +515,13 @@ class NetworkExpander {
         await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 500));
       }
     }
+
+    // Make sure the full message landed (e.g. if focus was lost mid-way)
+    if (element.value !== message) {
+      element.value = message;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    element.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   // Main network expansion process
@@ -501,6 +670,7 @@ class NetworkExpander {
 
   // Check if there's a pending expansion task (called on page load)
   async checkPendingExpansion() {
+    await this.ready;
     const pending = localStorage.getItem('networkExpansionPending');
     console.log('[Network Expander] checkPendingExpansion called. Pending task:', pending ? 'found' : 'none');
 
@@ -563,10 +733,17 @@ class NetworkExpander {
           // Clear the pending task (no more pagination)
           localStorage.removeItem('networkExpansionPending');
 
-          // After processing all pages for this role, continue to next role if not at limit
-          if (!this.hasReachedDailyLimit()) {
+          // Count consecutive roles where nothing could be sent, so a problem
+          // on every page doesn't cycle through the roles forever
+          const rolesWithoutInvites = totalSent > 0 ? 0 : (task.rolesWithoutInvites || 0) + 1;
+
+          // After processing all pages for this role, continue to next role
+          // unless the user pressed Stop or a limit was reached
+          if (!this.isRunning) {
+            console.log('[Network Expander] Stopped - not continuing to the next role.');
+          } else if (!this.hasReachedDailyLimit()) {
             console.log('[Network Expander] Continuing automated expansion to next role...');
-            await this.runAutomatedExpansion();
+            await this.runAutomatedExpansion(rolesWithoutInvites);
           } else {
             console.log('[Network Expander] ✅ Daily limit reached! Stopping automated expansion.');
             this.isRunning = false;
@@ -706,10 +883,17 @@ class NetworkExpander {
   }
 
   // Automated expansion: cycles through roles until daily limit reached
-  async runAutomatedExpansion() {
+  async runAutomatedExpansion(rolesWithoutInvites = 0) {
     this.isRunning = true;
     const connectionsPerRole = this.settings.connectionsPerRole || 3;
     const maxDaily = this.settings.maxDailyInvites || 30;
+    const roleCount = Math.max(1, (this.settings.targetRoles || []).length);
+
+    if (rolesWithoutInvites >= roleCount) {
+      console.log('[Network Expander] 🛑 No invitations could be sent for any role in a full rotation - stopping. Check the console messages above for the reason.');
+      this.stopExpanding('no invitations could be sent');
+      return;
+    }
 
     console.log(`[Network Expander] 🎯 Target: ${maxDaily} connections total, ${connectionsPerRole} per role`);
 
@@ -740,6 +924,7 @@ class NetworkExpander {
       maxConnections: connectionsThisRound,
       connectionsAlreadySent: 0,
       currentPage: 1,
+      rolesWithoutInvites,
       timestamp: Date.now()
     }));
 
@@ -754,8 +939,8 @@ class NetworkExpander {
     window.location.href = searchUrl;
   }
 
-  stopExpanding() {
-    console.log('[Network Expander] Stop requested by user');
+  stopExpanding(reason = 'requested by user') {
+    console.log('[Network Expander] Stopping:', reason);
     this.isRunning = false;
     localStorage.removeItem('networkExpansionPending');
   }

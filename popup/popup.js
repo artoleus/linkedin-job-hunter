@@ -6,7 +6,6 @@ class PopupController {
     this.settings = {};
     this.opportunities = [];
     this.status = {};
-    this.isEditingSettings = false;
 
     this.init();
   }
@@ -27,6 +26,9 @@ class PopupController {
       await this.loadData();
       this.setupEventListeners();
       this.updateUI();
+      // Fill the settings form once; the periodic refresh never touches it,
+      // so unsaved edits aren't wiped while typing
+      this.populateSettingsForm();
 
       // Load network status and job application status
       await this.updateNetworkStatus();
@@ -99,7 +101,11 @@ class PopupController {
 
   async refreshData() {
     try {
-      // Refresh from background script
+      // Refresh from background script (settings are refreshed for the stats
+      // display only; the settings form is left alone)
+      const settingsResponse = await chrome.runtime.sendMessage({ action: 'getSettings' });
+      this.settings = settingsResponse.settings || this.settings;
+
       const opportunitiesResponse = await chrome.runtime.sendMessage({ action: 'getOpportunities' });
       this.opportunities = opportunitiesResponse.opportunities || [];
 
@@ -176,39 +182,12 @@ class PopupController {
     document.getElementById('stopJobApplication').addEventListener('click', () => {
       this.stopJobApplication();
     });
-
-    // Track when user is editing settings fields
-    const settingsInputs = [
-      'maxProfiles', 'minDelay', 'maxDelay', 'keywords', 'targetRoles',
-      'maxDailyInvites', 'connectionsPerRole',
-      'maxDailyApplications', 'targetJobRoles', 'minSalary', 'maxSalary',
-      'autoFillName', 'autoFillEmail', 'autoFillPhone'
-    ];
-
-    const checkboxInputs = [
-      'usePersonalizedMessages', 'targetHiringOnly',
-      'workTypeRemote', 'workTypeHybrid', 'workTypeOnsite'
-    ];
-
-    settingsInputs.forEach(id => {
-      const element = document.getElementById(id);
-      element.addEventListener('focus', () => {
-        this.isEditingSettings = true;
-      });
-      element.addEventListener('blur', () => {
-        // Delay clearing the flag to allow save button click to register
-        setTimeout(() => {
-          this.isEditingSettings = false;
-        }, 200);
-      });
-    });
   }
 
   updateUI() {
     this.updateStatus();
     this.updateStats();
     this.updateOpportunities();
-    this.updateSettings();
   }
 
   updateStatus() {
@@ -291,12 +270,7 @@ class PopupController {
     });
   }
 
-  updateSettings() {
-    // Don't update settings fields if user is currently editing them
-    if (this.isEditingSettings) {
-      return;
-    }
-
+  populateSettingsForm() {
     document.getElementById('maxProfiles').value = this.settings.maxProfilesPerDay || 80;
     document.getElementById('minDelay').value = (this.settings.minDelay || 2000) / 1000;
     document.getElementById('maxDelay').value = (this.settings.maxDelay || 8000) / 1000;
@@ -576,8 +550,13 @@ class PopupController {
       const delayA = this.readNumber('minDelay', 2) * 1000;
       const delayB = this.readNumber('maxDelay', 8) * 1000;
 
+      // Merge onto the latest stored settings so values changed elsewhere
+      // (e.g. scanning toggled on the page) aren't overwritten
+      const latestResponse = await chrome.runtime.sendMessage({ action: 'getSettings' });
+      const latestSettings = latestResponse.settings || this.settings;
+
       const newSettings = {
-        ...this.settings,
+        ...latestSettings,
         maxProfilesPerDay: this.readNumber('maxProfiles', 80),
         minDelay: Math.min(delayA, delayB),
         maxDelay: Math.max(delayA, delayB),
@@ -609,7 +588,7 @@ class PopupController {
       });
 
       this.settings = newSettings;
-      this.isEditingSettings = false;
+      this.populateSettingsForm();
       this.showSuccess('Settings saved!');
 
     } catch (error) {
