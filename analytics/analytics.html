@@ -41,6 +41,20 @@
       </div>
     </div>
 
+    <!-- Welcome messages for new connections -->
+    <section class="welcome-section" id="welcomeSection">
+      <div class="section-header">
+        <h3>💬 Welcome messages</h3>
+        <label class="inline-setting">
+          Suggest a message
+          <input type="number" id="welcomeDelayDays" min="0" max="14" value="1">
+          day(s) after someone accepts
+        </label>
+      </div>
+      <p class="hint" id="welcomeHint"></p>
+      <div id="welcomeList"></div>
+    </section>
+
     <!-- Charts Section -->
     <div class="charts-grid">
       <div class="chart-container">
@@ -86,11 +100,12 @@
               <th>Status</th>
               <th>Response Time</th>
               <th>Time of Day</th>
+              <th>Welcome</th>
             </tr>
           </thead>
           <tbody id="requestsTableBody">
             <tr>
-              <td colspan="6" class="no-data">No connection requests yet</td>
+              <td colspan="7" class="no-data">No connection requests yet</td>
             </tr>
           </tbody>
         </table>
@@ -111,6 +126,8 @@
 
   <script src="../lib/chart.min.js"></script>
   <script src="../shared/csv.js"></script>
+  <script src="../shared/text-utils.js"></script>
+  <script src="../shared/welcome-messages.js"></script>
   <script src="analytics.js"></script>
 </body>
 </html>

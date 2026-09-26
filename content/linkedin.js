@@ -8,6 +8,7 @@ class LinkedInJobHunter {
     this.networkExpander = new window.NetworkExpander(this.storage);
     this.connectionMonitor = new window.ConnectionMonitor(this.storage);
     this.jobApplicator = new window.JobApplicator(this.storage);
+    this.welcomeMessenger = new window.WelcomeMessenger(this.storage);
 
     this.isInitialized = false;
     this.settings = {};
@@ -52,8 +53,18 @@ class LinkedInJobHunter {
       this.setupObservers();
       console.log('[Job Hunter] Observers set up');
 
-      // Check for pending network expansion task
-      await this.networkExpander.checkPendingExpansion();
+      // A tab opened to send a welcome message does only that: the pending
+      // network expansion task is shared by all LinkedIn tabs and must not
+      // take this one over
+      const welcomeTask = await this.welcomeMessenger.claimTask();
+      if (welcomeTask) {
+        this.welcomeMessenger.run(welcomeTask).catch(error => {
+          console.error('[Job Hunter] Welcome message error:', error);
+        });
+      } else {
+        // Check for pending network expansion task
+        await this.networkExpander.checkPendingExpansion();
+      }
       console.log('[Job Hunter] Checked for pending network expansion');
 
       // Auto-scan if enabled

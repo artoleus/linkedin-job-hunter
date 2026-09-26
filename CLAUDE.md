@@ -51,7 +51,11 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/connection-monitor.js**: Monitors connection request status changes by checking LinkedIn's sent invitations page and connections page. Detects accepted, pending, and declined connections. Uses fuzzy name matching to handle variations. Navigates between pages to verify connection status accurately. Falls back to page content search when card selectors fail.
 
-- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped).
+- **content/welcome-messenger.js**: Sends a welcome message to a new connection. The Connection Analytics page asks the background (`startWelcomeMessage`) to open the person's profile, or a search of 1st-degree connections, in a new tab; the content script there claims the task once (`getPendingWelcome`), clicks Message, verifies the conversation header names the person (never types otherwise, and refuses ambiguous name searches), types the message and reports back (`welcomeMessageResult`). A tab opened for a welcome message skips the network expander's shared pending task.
+
+- **shared/welcome-messages.js**: `WelcomeMessages` templates, draft wording and "ready" rules (accepted, not yet welcomed/skipped, `settings.welcomeDelayDays` after acceptance, default 1); shared by the Connection Analytics page and the popup.
+
+- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped). Has the "Welcome messages" queue for accepted connections (edit, send via LinkedIn, new wording, skip).
 
 - **applications/applications.js**: Job applications tracker dashboard. Pipeline statuses (needs completion, applied, interviewing, offer, rejected, withdrawn) changed from the table, a per-application timeline with dated notes and an optional follow-up reminder date, a "Follow-ups due" list (after `settings.followUpDays` without an update, default 7, or on the reminder date), a "What's working" breakdown by target role and work type, adding applications made outside Auto Apply, CSV export/import (including history; import skips duplicates) and deletion. Status changes, notes and follow-ups go through the background's `addApplicationEvent`, which appends to `application.history`.
 
@@ -172,7 +176,7 @@ Add to `job-detector.js`:
 - Role fit score based on your skills/experience (configurable profile)
 
 **4. Follow-up Automation**
-- Auto-message accepted connections after 1-2 days
+- ✅ Welcome messages for accepted connections (reviewed, then sent with one click)
 - Thank you messages for new connections
 - Periodic check-ins with network (e.g., congratulate on work anniversaries)
 - Follow-up on unanswered applications

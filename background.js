@@ -1,5 +1,8 @@
 // Background service worker for LinkedIn Job Hunter
 
+// A welcome message still "sending" after this long has failed
+const WELCOME_TIMEOUT_MS = 3 * 60 * 1000;
+
 class BackgroundService {
   constructor() {
     console.log('[Background] Service worker starting...');
@@ -163,6 +166,30 @@ class BackgroundService {
 
         case 'updateConnectionStatus':
           await this.withLock(() => this.updateConnectionStatus(request.requestId, request.status));
+          sendResponse({ success: true });
+          break;
+
+        case 'updateConnectionRequest':
+          await this.withLock(() => this.updateConnectionRequest(request.requestId, request.updates));
+          sendResponse({ success: true });
+          break;
+
+        case 'startWelcomeMessage':
+          await this.withLock(() => this.startWelcomeMessage(request.requestId, request.message, sender.tab?.id));
+          sendResponse({ success: true });
+          break;
+
+        case 'getPendingWelcome':
+          sendResponse({ task: await this.withLock(() => this.claimPendingWelcome(sender.tab?.id)) });
+          break;
+
+        case 'welcomeMessageResult':
+          await this.withLock(() => this.finishWelcomeMessage(request.requestId, request));
+          sendResponse({ success: true });
+          break;
+
+        case 'cancelPendingWelcome':
+          await this.withLock(() => this.cancelPendingWelcome());
           sendResponse({ success: true });
           break;
 
@@ -361,6 +388,121 @@ class BackgroundService {
                 Math.round(analytics.stats.acceptanceRate * 100) + '%');
   }
 
+  // Welcome-message fields the Connection Analytics page may change
+  async updateConnectionRequest(requestId, updates = {}) {
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+    const request = analytics.requests.find(r => r.id === requestId);
+    if (!request) return;
+
+    if ('welcomeDraft' in updates) request.welcomeDraft = updates.welcomeDraft ? String(updates.welcomeDraft).slice(0, 2000) : null;
+    if ('welcomeVariant' in updates) request.welcomeVariant = Number(updates.welcomeVariant) || 0;
+    if ('welcomeStatus' in updates) {
+      const status = updates.welcomeStatus;
+      request.welcomeStatus = ['sent', 'skipped'].includes(status) ? status : null;
+      request.welcomeError = null;
+      if (status === 'sent') request.welcomeSentAt = new Date().toISOString();
+    }
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+  }
+
+  // Send a welcome message: open the person's profile (or search your
+  // connections for them) in a new tab; the content script there picks up
+  // the task, types the message and reports back
+  async startWelcomeMessage(requestId, message, returnTabId) {
+    const { pendingWelcome } = await chrome.storage.local.get(['pendingWelcome']);
+    if (pendingWelcome && Date.now() - pendingWelcome.startedAt < WELCOME_TIMEOUT_MS) {
+      throw new Error('Another welcome message is still being sent - wait for it to finish');
+    }
+
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+    const request = analytics.requests.find(r => r.id === requestId);
+    if (!request) throw new Error('Connection not found');
+
+    const text = String(message || '').trim().slice(0, 2000);
+    if (!text) throw new Error('The message is empty');
+
+    const profileUrl = /^https:\/\/([a-z]+\.)?linkedin\.com\/in\/[^/?#]+/.test(request.profileUrl || '') ? request.profileUrl : null;
+    const url = profileUrl ||
+      `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(request.fullName)}&network=%5B%22F%22%5D`;
+
+    // Create the tab first so the task can be tied to it before LinkedIn loads
+    const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+    await chrome.storage.local.set({
+      pendingWelcome: {
+        requestId,
+        fullName: request.fullName,
+        message: text,
+        stage: profileUrl ? 'profile' : 'search',
+        tabId: tab.id,
+        returnTabId: returnTabId || null,
+        startedAt: Date.now(),
+        claimed: false
+      }
+    });
+
+    request.welcomeDraft = text;
+    request.welcomeStatus = 'sending';
+    request.welcomeError = null;
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+
+    await chrome.tabs.update(tab.id, { url });
+  }
+
+  // Hand the pending welcome message to the content script in its tab, once
+  // (so a page reload mid-way can't send it twice)
+  async claimPendingWelcome(tabId) {
+    const { pendingWelcome } = await chrome.storage.local.get(['pendingWelcome']);
+    if (!pendingWelcome || !tabId || pendingWelcome.tabId !== tabId) return null;
+
+    if (Date.now() - pendingWelcome.startedAt > WELCOME_TIMEOUT_MS) {
+      await this.finishWelcomeMessage(pendingWelcome.requestId, { success: false, error: 'Timed out before the message could be sent' });
+      return null;
+    }
+    if (pendingWelcome.claimed) return null;
+
+    await chrome.storage.local.set({ pendingWelcome: { ...pendingWelcome, claimed: true } });
+    const { requestId, fullName, message, stage } = pendingWelcome;
+    return { requestId, fullName, message, stage };
+  }
+
+  async finishWelcomeMessage(requestId, outcome = {}) {
+    const stored = await chrome.storage.local.get(['connectionAnalytics', 'pendingWelcome']);
+    const analytics = stored.connectionAnalytics || { requests: [], stats: {} };
+    const pending = stored.pendingWelcome;
+    const request = analytics.requests.find(r => r.id === requestId);
+
+    if (request) {
+      request.welcomeStatus = outcome.success ? 'sent' : 'failed';
+      request.welcomeError = outcome.success ? null : String(outcome.error || 'Not sent').slice(0, 300);
+      if (outcome.success) {
+        request.welcomeSentAt = new Date().toISOString();
+        request.welcomeMessage = outcome.message || request.welcomeDraft || null;
+      }
+      await chrome.storage.local.set({ connectionAnalytics: analytics });
+    }
+
+    if (pending && pending.requestId === requestId) {
+      await chrome.storage.local.remove('pendingWelcome');
+      // On success, tidy up: close the LinkedIn tab and return to the analytics page
+      if (outcome.success && pending.tabId) {
+        setTimeout(() => {
+          chrome.tabs.remove(pending.tabId).catch(() => {});
+          if (pending.returnTabId) chrome.tabs.update(pending.returnTabId, { active: true }).catch(() => {});
+        }, 2500);
+      }
+    }
+    console.log('[Background] Welcome message', outcome.success ? 'sent' : 'failed', outcome.error || '');
+  }
+
+  async cancelPendingWelcome() {
+    const { pendingWelcome } = await chrome.storage.local.get(['pendingWelcome']);
+    if (pendingWelcome) {
+      await this.finishWelcomeMessage(pendingWelcome.requestId, { success: false, error: 'Cancelled' });
+    }
+  }
+
   // Merge connection requests imported from a CSV export, skipping any that
   // already exist (same person, sent in the same minute)
   async importConnectionRequests(imported = []) {
@@ -386,7 +528,11 @@ class BackgroundService {
         responseDate: status !== 'pending' && responded && !isNaN(responded) ? responded.toISOString() : null,
         messageTemplate: item.messageTemplate || null,
         timeOfDay: sent.getHours(),
-        dayOfWeek: sent.getDay()
+        dayOfWeek: sent.getDay(),
+        ...(['sent', 'skipped'].includes(item.welcomeStatus) ? {
+          welcomeStatus: item.welcomeStatus,
+          welcomeSentAt: item.welcomeSentAt && !isNaN(new Date(item.welcomeSentAt)) ? new Date(item.welcomeSentAt).toISOString() : null
+        } : {})
       };
 
       const key = keyOf(request);

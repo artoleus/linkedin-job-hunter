@@ -207,6 +207,11 @@ class PopupController {
       const due = (applications?.applications || []).filter(app => Pipeline.followUpDue(app, followUpDays)).length;
       document.getElementById('followUpsBadge').textContent =
         due ? `(${due} follow-up${due === 1 ? '' : 's'} due)` : '';
+
+      const { analytics } = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
+      const welcomes = (analytics?.requests || []).filter(req => WelcomeMessages.isReady(req, this.settings)).length;
+      document.getElementById('welcomeBadge').textContent =
+        welcomes ? `(${welcomes} welcome message${welcomes === 1 ? '' : 's'} ready)` : '';
     } catch (error) {
       console.error('Failed to load reminders:', error);
     }

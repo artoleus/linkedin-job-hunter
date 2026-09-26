@@ -5,6 +5,8 @@ class AnalyticsDashboard {
     this.analytics = null;
     this.charts = {};
     this.filteredRequests = [];
+    this.settings = {};
+    this.pendingWelcome = null;
 
     this.init();
   }
@@ -13,8 +15,20 @@ class AnalyticsDashboard {
     try {
       console.log('[Analytics] Loading analytics data...');
       await this.loadData();
+      document.getElementById('welcomeDelayDays').value = WelcomeMessages.delayDays(this.settings);
       this.setupEventListeners();
       this.render();
+
+      // Keep the page current while welcome messages are sent and
+      // acceptances are found in LinkedIn tabs
+      chrome.storage.onChanged.addListener(async (changes, area) => {
+        if (area !== 'local') return;
+        if (changes.connectionAnalytics || changes.pendingWelcome || changes.settings) {
+          await this.loadData();
+          this.render();
+          this.filterRequests();
+        }
+      });
     } catch (error) {
       console.error('[Analytics] Initialization error:', error);
     }
@@ -24,6 +38,11 @@ class AnalyticsDashboard {
     const result = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
     this.analytics = result.analytics || { requests: [], stats: {} };
     this.filteredRequests = this.analytics.requests;
+
+    const { settings } = await chrome.runtime.sendMessage({ action: 'getSettings' });
+    this.settings = settings || {};
+    const stored = await chrome.storage.local.get(['pendingWelcome']);
+    this.pendingWelcome = stored.pendingWelcome || null;
     console.log('[Analytics] Loaded', this.analytics.requests.length, 'connection requests');
   }
 
@@ -55,6 +74,9 @@ class AnalyticsDashboard {
         alert('Import failed: ' + error.message);
       });
     });
+
+    // Welcome message waiting time
+    document.getElementById('welcomeDelayDays').addEventListener('change', (e) => this.saveWelcomeDelay(e.target.value));
 
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', async () => {
@@ -165,9 +187,127 @@ class AnalyticsDashboard {
 
   render() {
     this.renderStats();
+    this.renderWelcomeMessages();
     this.renderCharts();
     this.renderTable();
     this.populateRoleFilter();
+  }
+
+  // ---- Welcome messages ---------------------------------------------------------
+
+  renderWelcomeMessages() {
+    const list = document.getElementById('welcomeList');
+    const now = new Date();
+    const requests = this.analytics.requests;
+
+    // Keep what's being typed across refreshes
+    const typing = new Map(Array.from(list.querySelectorAll('textarea[data-request-id]'))
+      .filter(box => box === document.activeElement || box.dataset.edited === 'true')
+      .map(box => [box.dataset.requestId, box.value]));
+
+    const candidates = requests.filter(req => WelcomeMessages.isCandidate(req));
+    const ready = candidates
+      .filter(req => WelcomeMessages.isReady(req, this.settings, now) || req.welcomeStatus === 'sending' || req.welcomeStatus === 'failed')
+      .sort((a, b) => WelcomeMessages.readyAt(a, this.settings) - WelcomeMessages.readyAt(b, this.settings));
+    const upcoming = candidates.length - ready.length;
+    const sent = requests.filter(req => req.welcomeStatus === 'sent').length;
+
+    const hint = [];
+    if (ready.length) hint.push(`${ready.length} ready to send. Check or edit each message, then send it; it's typed into LinkedIn for you in a new tab.`);
+    else hint.push('No new connections waiting for a welcome message.');
+    if (upcoming) hint.push(`${upcoming} more will be suggested once the waiting time passes.`);
+    if (sent) hint.push(`${sent} sent so far.`);
+    hint.push('Use "Check Accepted Connections" below to find new acceptances.');
+    document.getElementById('welcomeHint').textContent = hint.join(' ');
+
+    list.innerHTML = '';
+    for (const req of ready) {
+      list.appendChild(this.renderWelcomeItem(req, typing.get(req.id)));
+    }
+  }
+
+  renderWelcomeItem(req, typedText) {
+    const item = document.createElement('div');
+    item.className = 'welcome-item';
+    const sending = req.welcomeStatus === 'sending';
+
+    const header = document.createElement('div');
+    header.className = 'welcome-header';
+    const name = document.createElement(req.profileUrl && /linkedin\.com\/in\//.test(req.profileUrl) ? 'a' : 'strong');
+    name.textContent = req.fullName;
+    if (name.tagName === 'A') {
+      name.href = req.profileUrl;
+      name.target = '_blank';
+      name.rel = 'noopener';
+    }
+    const meta = document.createElement('span');
+    meta.className = 'welcome-meta';
+    const acceptedDays = Math.max(0, Math.floor((Date.now() - new Date(req.responseDate || req.sentDate)) / WelcomeMessages.DAY_MS));
+    meta.textContent = ` · found via "${req.targetRole || 'Unknown'}" · accepted ${acceptedDays === 0 ? 'today' : acceptedDays + ' day' + (acceptedDays === 1 ? '' : 's') + ' ago'}`;
+    header.append(name, meta);
+
+    const box = document.createElement('textarea');
+    box.rows = 3;
+    box.dataset.requestId = req.id;
+    box.value = typedText ?? WelcomeMessages.draft(req, this.settings);
+    box.disabled = sending;
+    box.addEventListener('input', () => { box.dataset.edited = 'true'; });
+    box.addEventListener('change', () => this.updateRequest(req.id, { welcomeDraft: box.value.trim() }));
+
+    const actions = document.createElement('div');
+    actions.className = 'welcome-actions';
+    const button = (text, cls, onClick) => {
+      const btn = document.createElement('button');
+      btn.className = cls;
+      btn.textContent = text;
+      btn.addEventListener('click', onClick);
+      actions.appendChild(btn);
+      return btn;
+    };
+
+    if (sending) {
+      const status = document.createElement('span');
+      status.className = 'welcome-status';
+      status.textContent = '⏳ Sending in a LinkedIn tab…';
+      actions.appendChild(status);
+      button('Cancel', 'btn btn-secondary small', () => chrome.runtime.sendMessage({ action: 'cancelPendingWelcome' }));
+    } else {
+      button('Send via LinkedIn', 'btn btn-primary small', () => this.sendWelcome(req, box.value.trim()));
+      button('New wording', 'btn btn-secondary small', () =>
+        this.updateRequest(req.id, { welcomeDraft: null, welcomeVariant: (req.welcomeVariant || 0) + 1 }));
+      button('Skip', 'btn btn-secondary small', () => this.updateRequest(req.id, { welcomeStatus: 'skipped' }));
+      if (req.welcomeStatus === 'failed') {
+        const error = document.createElement('span');
+        error.className = 'welcome-error';
+        error.textContent = `Not sent: ${req.welcomeError || 'unknown problem'}`;
+        actions.appendChild(error);
+        button('Mark as sent', 'btn btn-secondary small', () => this.updateRequest(req.id, { welcomeStatus: 'sent' }));
+      }
+    }
+
+    item.append(header, box, actions);
+    return item;
+  }
+
+  async updateRequest(requestId, updates) {
+    await chrome.runtime.sendMessage({ action: 'updateConnectionRequest', requestId, updates });
+  }
+
+  async sendWelcome(req, message) {
+    if (!message) {
+      alert('The message is empty.');
+      return;
+    }
+    const result = await chrome.runtime.sendMessage({ action: 'startWelcomeMessage', requestId: req.id, message });
+    if (result?.error) alert('Could not start sending: ' + result.error);
+  }
+
+  async saveWelcomeDelay(value) {
+    const days = Math.max(0, Math.min(14, parseInt(value, 10)));
+    const delay = Number.isFinite(days) ? days : WelcomeMessages.DEFAULT_DELAY_DAYS;
+    document.getElementById('welcomeDelayDays').value = delay;
+    const { settings } = await chrome.runtime.sendMessage({ action: 'getSettings' });
+    await chrome.runtime.sendMessage({ action: 'updateSettings', settings: { ...settings, welcomeDelayDays: delay } });
   }
 
   renderStats() {
@@ -406,7 +546,7 @@ class AnalyticsDashboard {
     const tbody = document.getElementById('requestsTableBody');
 
     if (this.filteredRequests.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="no-data">No requests found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="no-data">No requests found</td></tr>';
       return;
     }
 
@@ -429,6 +569,7 @@ class AnalyticsDashboard {
           <td><span class="status-badge status-${this.escapeHtml(req.status)}">${this.escapeHtml(this.capitalize(req.status))}</span></td>
           <td>${responseTime}</td>
           <td>${this.formatTimeOfDay(req.timeOfDay)}</td>
+          <td>${this.escapeHtml(this.welcomeLabel(req))}</td>
         </tr>
       `;
     }).join('');
@@ -437,9 +578,12 @@ class AnalyticsDashboard {
   populateRoleFilter() {
     const roles = [...new Set(this.analytics.requests.map(r => r.targetRole))].filter(Boolean);
     const roleFilter = document.getElementById('roleFilter');
+    const selected = roleFilter.value;
 
     roleFilter.innerHTML = '<option value="all">All Roles</option>' +
       roles.map(role => `<option value="${this.escapeHtml(role)}">${this.escapeHtml(role)}</option>`).join('');
+    // Keep the chosen role when the page refreshes itself
+    if (roles.includes(selected)) roleFilter.value = selected;
   }
 
   filterRequests() {
@@ -462,7 +606,8 @@ class AnalyticsDashboard {
   }
 
   exportToCSV() {
-    const headers = ['Name', 'Role', 'Sent Date', 'Status', 'Response Date', 'Response Time (hours)', 'Time of Day', 'Profile URL', 'Message'];
+    const headers = ['Name', 'Role', 'Sent Date', 'Status', 'Response Date', 'Response Time (hours)', 'Time of Day', 'Profile URL', 'Message',
+                     'Welcome', 'Welcome Sent'];
     const rows = this.filteredRequests.map(req => [
       req.fullName,
       req.targetRole,
@@ -472,7 +617,9 @@ class AnalyticsDashboard {
       req.responseDate ? Math.round((new Date(req.responseDate) - new Date(req.sentDate)) / (1000 * 60 * 60)) : '',
       req.timeOfDay,
       req.profileUrl || '',
-      req.messageTemplate || ''
+      req.messageTemplate || '',
+      ['sent', 'skipped'].includes(req.welcomeStatus) ? req.welcomeStatus : '',
+      req.welcomeSentAt || ''
     ]);
 
     CsvUtils.download(CsvUtils.toCsv([headers, ...rows]),
@@ -505,7 +652,9 @@ class AnalyticsDashboard {
         status: CsvUtils.column(row, 'status').toLowerCase() || 'pending',
         responseDate: responseDate ? responseDate.toISOString() : null,
         profileUrl: CsvUtils.column(row, 'profile url'),
-        messageTemplate: CsvUtils.column(row, 'message')
+        messageTemplate: CsvUtils.column(row, 'message'),
+        welcomeStatus: CsvUtils.column(row, 'welcome').toLowerCase(),
+        welcomeSentAt: CsvUtils.column(row, 'welcome sent')
       });
     }
 
@@ -533,6 +682,16 @@ class AnalyticsDashboard {
       invalid ? `${invalid} row(s) had no name or date` : ''
     ].filter(Boolean).join(', ');
     alert(`Imported ${result.added} connection request(s)` + (notes ? ` (${notes}).` : '.'));
+  }
+
+  welcomeLabel(req) {
+    switch (req.welcomeStatus) {
+      case 'sent': return req.welcomeSentAt ? `Sent ${new Date(req.welcomeSentAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : 'Sent';
+      case 'skipped': return 'Skipped';
+      case 'sending': return 'Sending…';
+      case 'failed': return 'Not sent';
+      default: return req.status === 'accepted' ? 'To do' : '';
+    }
   }
 
   formatResponseTime(sentDate, responseDate) {

@@ -22,12 +22,15 @@ A Chrome browser extension that automatically discovers job opportunities throug
 - **Personalized Messages**: Customizable templates for connection requests
 - **Daily Limits**: Conservative limits (25-30 invites/day) for safe operation
 - **Connection Analytics**: Track acceptance rates, response times, and success metrics
+- **Welcome Messages**: When someone accepts, a friendly welcome message is suggested on the Connection Analytics page; review or edit it, then one click types and sends it in LinkedIn (never to the wrong person: it checks the conversation is theirs first)
 
 ### Job Application Automation
 - **Auto-Apply**: Automatically apply to jobs matching your criteria
 - **Distance Filtering**: Filter by remote, hybrid, or onsite with location-based distance calculation
 - **Salary Filtering**: Set minimum/maximum salary requirements
-- **Application Tracking**: Track all applications with status updates
+- **Application Answers**: Save your answers once (right to work, sponsorship, UK security clearance, years per skill, certifications, salary, notice period, education and your own custom answers) and Easy Apply questions are filled in for you. Questions without a saved answer are never guessed: the application is saved as a draft and the question is listed for you to answer once
+- **Application Pipeline**: Move applications through Applied → Interviewing → Offer / Rejected, keep dated notes, and get follow-up reminders when you haven't heard back
+- **What's Working**: Interview and response rates by target role and work type
 - **Cover Letter Detection**: Identify jobs requiring additional materials
 
 ### Analytics & Insights
@@ -35,6 +38,10 @@ A Chrome browser extension that automatically discovers job opportunities throug
 - **Role-based Analysis**: See which roles have highest acceptance rates
 - **Time Analysis**: Optimize when to send requests based on time-of-day and day-of-week data
 - **Application Tracking**: Monitor job application status and outcomes
+
+### Moving to Another Computer
+- **Backup & Restore**: Export your settings (including application answers) as a file and import them on another computer
+- **CSV Import**: Import applications and connection history from the tool's own CSV exports (duplicates are skipped)
 
 ### Safety & Privacy
 - **Human-like Behavior**: Implements realistic delays, scrolling patterns, and interaction timing
@@ -234,7 +241,17 @@ linkedin-job-hunter/
 │   ├── job-detector.js        # Opportunity detection
 │   ├── network-expander.js    # Connection request automation
 │   ├── connection-monitor.js  # Acceptance tracking
-│   └── job-applicator.js      # Job application automation
+│   ├── job-applicator.js      # Job application automation
+│   └── welcome-messenger.js   # Sends welcome messages to new connections
+├── shared/
+│   ├── answer-bank.js         # Answers to Easy Apply questions
+│   ├── pipeline.js            # Application statuses and follow-ups
+│   ├── welcome-messages.js    # Welcome message wording and timing
+│   ├── text-utils.js          # Role/name matching helpers
+│   └── csv.js                 # CSV import/export
+├── answers/                   # Application Answers page
+├── applications/              # Applications tracker page
+├── backup-restore/            # Settings backup & restore page
 ├── popup/
 │   ├── popup.html             # Extension popup interface
 │   ├── popup.css              # Popup styling
@@ -353,7 +370,14 @@ All automation runs in content scripts injected into LinkedIn pages:
 
 ## Version History
 
-### v1.2 (Current)
+### v1.3 (Current)
+- **Application Answers**: Easy Apply questions answered from your saved answers; unanswered questions listed to answer once
+- **Application Pipeline**: Interviewing / offer / rejected statuses, timeline notes, follow-up reminders and "What's working" stats
+- **Welcome Messages**: One-click welcome messages for accepted connections
+- **Backup & Restore / CSV Import**: Move settings and history to another computer
+- Fixes for network expansion notes, settings being overwritten, and several security issues
+
+### v1.2
 - **Connection Analytics Dashboard**: Visualize networking performance
 - **Connection Monitoring**: Auto-detect accepted connections
 - **Job Application Automation**: Apply to jobs matching criteria
