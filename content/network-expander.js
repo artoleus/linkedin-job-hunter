@@ -171,34 +171,33 @@ class NetworkExpander {
   }
 
   // Find all Connect buttons on the page
+  // Connect controls on a people search page. LinkedIn's newer search page
+  // renders these as links as well as buttons, without the old class names,
+  // so match on the accessible label ("Invite Jane Doe to connect") or the
+  // visible text "Connect".
   findAllConnectButtons() {
-    const buttons = [];
+    const controls = Array.from(document.querySelectorAll('main button, main a, [role="main"] button, [role="main"] a'))
+      .filter(el => this.isVisible(el) && !this.isOutsideInvite(el) && !el.closest('aside'));
 
-    // Primary selector: buttons with "Invite to connect" aria-label
-    let found = document.querySelectorAll('button[aria-label*="Invite"][aria-label*="connect"]');
-    if (found.length > 0) {
-      console.log(`[Network Expander] Found ${found.length} buttons with Invite...connect aria-label`);
-      return Array.from(found);
-    }
+    const found = [...new Set(controls)].filter(el => {
+      const label = (el.getAttribute('aria-label') || '').trim();
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+      return /^invite .+ to connect$/i.test(label) || /^connect$/i.test(text) ||
+             (/^connect\b/i.test(label) && !/connections/i.test(label));
+    });
 
-    // Fallback: buttons with "Connect" aria-label
-    found = document.querySelectorAll('button[aria-label*="Connect"]');
-    if (found.length > 0) {
-      console.log(`[Network Expander] Found ${found.length} buttons with Connect aria-label`);
-      return Array.from(found);
-    }
+    console.log(`[Network Expander] Found ${found.length} Connect controls (${found.filter(el => el.tagName === 'A').length} links)`);
+    return found;
+  }
 
-    // Last resort: find buttons containing span with "Connect" text
-    const allButtons = document.querySelectorAll('button');
-    for (const btn of allButtons) {
-      const span = btn.querySelector('span.artdeco-button__text');
-      if (span && span.textContent.trim() === 'Connect') {
-        buttons.push(btn);
-      }
-    }
-
-    console.log(`[Network Expander] Found ${buttons.length} buttons via span text search`);
-    return buttons;
+  // What's on the page, for the console when no Connect controls are found
+  describeSearchPage() {
+    const candidates = Array.from(document.querySelectorAll('main button, main a'))
+      .filter(el => this.isVisible(el) && /connect|invite|follow|message|pending/i.test(`${el.getAttribute('aria-label') || ''} ${el.textContent}`))
+      .slice(0, 8)
+      .map(el => `${el.tagName} "${(el.getAttribute('aria-label') || el.textContent).replace(/\s+/g, ' ').trim().slice(0, 60)}"`);
+    return `url=${location.pathname}${location.search} | results=${document.querySelectorAll('main li, main [role="listitem"]').length} | controls: ${candidates.join(', ') || 'none'}`;
   }
 
   // Poll until check() returns something truthy, or give up after timeoutMs.
@@ -214,10 +213,19 @@ class NetworkExpander {
   }
 
   // Search the page plus LinkedIn's shadow-DOM modal layer (used by newer pages)
+  // Search the page plus the places LinkedIn's newer pages render pop-ups:
+  // the shadow-DOM modal layer and the same-origin "/preload/" frame
   queryAllDeep(selector) {
     const roots = [document];
     const interop = document.querySelector('#interop-outlet');
     if (interop?.shadowRoot) roots.push(interop.shadowRoot);
+    for (const frame of document.querySelectorAll('iframe[src*="/preload/"]')) {
+      try {
+        if (frame.contentDocument) roots.push(frame.contentDocument);
+      } catch (error) {
+        // Not same-origin: nothing we can reach
+      }
+    }
     return roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
   }
 
@@ -299,7 +307,7 @@ class NetworkExpander {
   async sendConnectionRequestByButton(connectBtn, withMessage = true) {
     try {
       // Try to find the profile container to get more info
-      const listItem = connectBtn.closest('li');
+      const listItem = connectBtn.closest('li, [role="listitem"], [data-view-name*="search-entity"]');
       let title = '';
       let company = '';
       let profileUrl = null;
@@ -327,7 +335,11 @@ class NetworkExpander {
 
       console.log('[Network Expander] Preparing to connect with:', displayName);
 
-      const industry = TextUtils.guessIndustry(title, company);
+      // The newer search page has no headline class names; fall back to the searched role
+      let industry = TextUtils.guessIndustry(title, company);
+      if (industry === 'the field' && this.currentTargetRole) {
+        industry = TextUtils.guessIndustry(this.currentTargetRole);
+      }
       const profileInfo = { fullName, firstName, title, company, industry };
 
       console.log('[Network Expander] Profile info:', profileInfo);
@@ -761,12 +773,17 @@ class NetworkExpander {
     console.log(`[Network Expander] Processing page ${currentPage} (need ${remaining} more connections, ${connectionsAlreadySent} already sent)...`);
 
     try {
-      // Wait for page to settle
+      // Wait for page to settle, then for the results to render (the newer
+      // search page loads them several seconds after the page itself)
       await this.humanDelay(3000, 5000);
+      await this.waitFor(() => this.findAllConnectButtons().length > 0, 20000);
 
       // Find all Connect buttons on the page
       const connectButtons = this.findAllConnectButtons();
       console.log(`[Network Expander] Found ${connectButtons.length} Connect buttons on page ${currentPage}`);
+      if (connectButtons.length === 0) {
+        console.log('[Network Expander] Page summary:', this.describeSearchPage());
+      }
 
       if (connectButtons.length === 0) {
         console.log(`[Network Expander] No Connect buttons found on page ${currentPage}, moving on...`);
