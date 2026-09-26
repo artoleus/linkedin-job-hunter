@@ -196,6 +196,20 @@ class BackgroundService {
           sendResponse({ applications });
           break;
 
+        case 'importJobApplications':
+          sendResponse({
+            success: true,
+            ...await this.withLock(() => this.importJobApplications(request.applications))
+          });
+          break;
+
+        case 'importConnectionRequests':
+          sendResponse({
+            success: true,
+            ...await this.withLock(() => this.importConnectionRequests(request.requests))
+          });
+          break;
+
         case 'deleteJobApplication':
           await this.withLock(() => this.deleteJobApplication(request.applicationId));
           sendResponse({ success: true });
@@ -322,6 +336,47 @@ class BackgroundService {
                 Math.round(analytics.stats.acceptanceRate * 100) + '%');
   }
 
+  // Merge connection requests imported from a CSV export, skipping any that
+  // already exist (same person, sent in the same minute)
+  async importConnectionRequests(imported = []) {
+    const result = await chrome.storage.local.get(['connectionAnalytics']);
+    const analytics = result.connectionAnalytics || { requests: [], stats: {} };
+    const keyOf = (r) => `${(r.fullName || '').toLowerCase()}|${new Date(r.sentDate).toISOString().slice(0, 16)}`;
+    const seen = new Set(analytics.requests.map(keyOf));
+
+    let added = 0;
+    for (const item of imported) {
+      const sent = new Date(item.sentDate);
+      if (!item.fullName || isNaN(sent)) continue;
+
+      const status = ['pending', 'accepted', 'declined'].includes(item.status) ? item.status : 'pending';
+      const responded = item.responseDate ? new Date(item.responseDate) : null;
+      const request = {
+        id: this.generateId(),
+        targetRole: item.targetRole || 'Unknown',
+        fullName: String(item.fullName),
+        profileUrl: item.profileUrl || null,
+        sentDate: sent.toISOString(),
+        status,
+        responseDate: status !== 'pending' && responded && !isNaN(responded) ? responded.toISOString() : null,
+        messageTemplate: item.messageTemplate || null,
+        timeOfDay: sent.getHours(),
+        dayOfWeek: sent.getDay()
+      };
+
+      const key = keyOf(request);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      analytics.requests.push(request);
+      added++;
+    }
+
+    analytics.stats = this.computeConnectionStats(analytics.requests);
+    await chrome.storage.local.set({ connectionAnalytics: analytics });
+    console.log('[Background] Imported', added, 'connection requests');
+    return { added, skipped: imported.length - added };
+  }
+
   async getConnectionAnalytics() {
     const result = await chrome.storage.local.get(['connectionAnalytics']);
     return result.connectionAnalytics || { requests: [], stats: {} };
@@ -426,6 +481,51 @@ class BackgroundService {
     Object.assign(application, updates);
     await chrome.storage.local.set({ jobApplications: jobApps });
     console.log('[Background] Job application updated:', applicationId);
+  }
+
+  // Merge applications imported from a CSV export, skipping any that already
+  // exist (same title and company, applied in the same minute)
+  async importJobApplications(imported = []) {
+    const result = await chrome.storage.local.get(['jobApplications']);
+    const jobApps = result.jobApplications || { applications: [] };
+    const keyOf = (app) => [
+      (app.jobTitle || '').toLowerCase(),
+      (app.company || '').toLowerCase(),
+      new Date(app.appliedDate).toISOString().slice(0, 16)
+    ].join('|');
+    const seen = new Set(jobApps.applications.map(keyOf));
+
+    let added = 0;
+    for (const item of imported) {
+      const applied = new Date(item.appliedDate);
+      if (!item.jobTitle || isNaN(applied)) continue;
+
+      const application = {
+        id: this.generateId(),
+        jobId: item.jobUrl || null,
+        jobTitle: String(item.jobTitle),
+        company: item.company || '',
+        location: item.location || '',
+        salary: item.salary || null,
+        workType: item.workType || null,
+        distance: null,
+        appliedDate: applied.toISOString(),
+        status: item.status || 'applied',
+        requiresCoverLetter: item.requiresCoverLetter === true,
+        notes: item.notes || '',
+        jobUrl: item.jobUrl || ''
+      };
+
+      const key = keyOf(application);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      jobApps.applications.push(application);
+      added++;
+    }
+
+    await chrome.storage.local.set({ jobApplications: jobApps });
+    console.log('[Background] Imported', added, 'job applications');
+    return { added, skipped: imported.length - added };
   }
 
   async getJobApplications() {

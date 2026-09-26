@@ -51,9 +51,13 @@ Each script exposes classes via `window.*` globals for cross-script communicatio
 
 - **content/connection-monitor.js**: Monitors connection request status changes by checking LinkedIn's sent invitations page and connections page. Detects accepted, pending, and declined connections. Uses fuzzy name matching to handle variations. Navigates between pages to verify connection status accurately. Falls back to page content search when card selectors fail.
 
-- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives.
+- **analytics/analytics.js**: Connection analytics dashboard that visualizes networking performance. Tracks acceptance rates (calculated as accepted/total sent), response times, success by role, time-of-day patterns, and day-of-week trends. Features interactive charts using Chart.js, filtering, search, CSV export, and manual connection status checking. Includes "Reset Accepted to Pending" button to clear false positives. Supports CSV import of a previous export (duplicates skipped).
 
-- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics including salary ranges extracted from job details. Supports CSV export and individual application deletion.
+- **applications/applications.js**: Job applications tracker dashboard. Displays all job applications (submitted and draft/needs completion), filtering by status and work type, with links to complete pending applications. Shows application statistics including salary ranges extracted from job details. Supports CSV export/import (import skips duplicates) and individual application deletion.
+
+- **backup-restore/backup.js**: Backup & Restore page (opened from the popup). Exports/imports settings as JSON for moving to another computer; imports never switch on scanning or automation. It is a separate page because extension popups can close when a file picker opens.
+
+- **shared/csv.js**: `CsvUtils` shared by the dashboards: CSV writing (with formula-injection guard), parsing (quoted cells, BOM, semicolon delimiters) and date parsing (ISO or UK DD/MM/YYYY as re-saved by Excel).
 
 ## Development
 

@@ -48,6 +48,14 @@ class AnalyticsDashboard {
       this.exportToCSV();
     });
 
+    // Import button
+    document.getElementById('importBtn').addEventListener('click', () => {
+      this.importFromCSV().catch(error => {
+        console.error('[Analytics] Import error:', error);
+        alert('Import failed: ' + error.message);
+      });
+    });
+
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', async () => {
       await this.loadData();
@@ -454,7 +462,7 @@ class AnalyticsDashboard {
   }
 
   exportToCSV() {
-    const headers = ['Name', 'Role', 'Sent Date', 'Status', 'Response Date', 'Response Time (hours)', 'Time of Day'];
+    const headers = ['Name', 'Role', 'Sent Date', 'Status', 'Response Date', 'Response Time (hours)', 'Time of Day', 'Profile URL', 'Message'];
     const rows = this.filteredRequests.map(req => [
       req.fullName,
       req.targetRole,
@@ -462,20 +470,69 @@ class AnalyticsDashboard {
       req.status,
       req.responseDate ? new Date(req.responseDate).toISOString() : '',
       req.responseDate ? Math.round((new Date(req.responseDate) - new Date(req.sentDate)) / (1000 * 60 * 60)) : '',
-      req.timeOfDay
+      req.timeOfDay,
+      req.profileUrl || '',
+      req.messageTemplate || ''
     ]);
 
-    const csv = [headers, ...rows]
-      .map(row => row.map(cell => this.csvCell(cell)).join(','))
-      .join('\n');
+    CsvUtils.download(CsvUtils.toCsv([headers, ...rows]),
+      `connection-analytics-${new Date().toISOString().split('T')[0]}.csv`);
+  }
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `connection-analytics-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Import connection requests from a CSV exported by this page (older
+  // exports without Profile URL/Message work too). Duplicates are skipped.
+  async importFromCSV() {
+    const file = await CsvUtils.pickFile();
+    if (!file) return;
+
+    const rows = CsvUtils.parseObjects(file.text);
+    const requests = [];
+    let invalid = 0;
+
+    for (const row of rows) {
+      const fullName = CsvUtils.column(row, 'name', 'full name');
+      const sentDate = CsvUtils.parseDate(CsvUtils.column(row, 'sent date', 'date'));
+      if (!fullName || !sentDate) {
+        invalid++;
+        continue;
+      }
+
+      const responseDate = CsvUtils.parseDate(CsvUtils.column(row, 'response date'));
+      requests.push({
+        fullName,
+        targetRole: CsvUtils.column(row, 'role', 'target role'),
+        sentDate: sentDate.toISOString(),
+        status: CsvUtils.column(row, 'status').toLowerCase() || 'pending',
+        responseDate: responseDate ? responseDate.toISOString() : null,
+        profileUrl: CsvUtils.column(row, 'profile url'),
+        messageTemplate: CsvUtils.column(row, 'message')
+      });
+    }
+
+    if (requests.length === 0) {
+      alert(`No connection requests found in "${file.name}". Please choose a CSV exported from this page.`);
+      return;
+    }
+
+    if (!confirm(`Import ${requests.length} connection request(s) from "${file.name}"? Requests you already have will be skipped.`)) {
+      return;
+    }
+
+    const result = await chrome.runtime.sendMessage({ action: 'importConnectionRequests', requests });
+    if (!result || result.error) {
+      alert('Import failed: ' + (result?.error || 'no response from the extension'));
+      return;
+    }
+
+    await this.loadData();
+    this.render();
+    this.filterRequests();
+
+    const notes = [
+      result.skipped ? `${result.skipped} already existed` : '',
+      invalid ? `${invalid} row(s) had no name or date` : ''
+    ].filter(Boolean).join(', ');
+    alert(`Imported ${result.added} connection request(s)` + (notes ? ` (${notes}).` : '.'));
   }
 
   formatResponseTime(sentDate, responseDate) {
@@ -512,16 +569,6 @@ class AnalyticsDashboard {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-  }
-
-  // Quote a CSV cell: double embedded quotes, and prefix values that
-  // spreadsheet apps would treat as formulas (CSV injection)
-  csvCell(value) {
-    let text = value === null || value === undefined ? '' : String(value);
-    if (/^[=+\-@\t\r]/.test(text)) {
-      text = "'" + text;
-    }
-    return `"${text.replace(/"/g, '""')}"`;
   }
 
   async addTestData() {

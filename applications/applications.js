@@ -50,6 +50,14 @@ class ApplicationsTracker {
       this.exportToCSV();
     });
 
+    // Import button
+    document.getElementById('importBtn').addEventListener('click', () => {
+      this.importFromCSV().catch(error => {
+        console.error('[Applications] Import error:', error);
+        alert('Import failed: ' + error.message);
+      });
+    });
+
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', async () => {
       await this.loadData();
@@ -140,7 +148,7 @@ class ApplicationsTracker {
   }
 
   exportToCSV() {
-    const headers = ['Job Title', 'Company', 'Work Type', 'Salary', 'Location', 'Applied Date', 'Status', 'Job URL'];
+    const headers = ['Job Title', 'Company', 'Work Type', 'Salary', 'Location', 'Applied Date', 'Status', 'Job URL', 'Notes'];
     const rows = this.filteredApplications.map(app => [
       app.jobTitle,
       app.company,
@@ -149,20 +157,77 @@ class ApplicationsTracker {
       app.location,
       new Date(app.appliedDate).toISOString(),
       app.status,
-      app.jobUrl
+      app.jobUrl,
+      app.notes || ''
     ]);
 
-    const csv = [headers, ...rows]
-      .map(row => row.map(cell => this.csvCell(cell)).join(','))
-      .join('\n');
+    CsvUtils.download(CsvUtils.toCsv([headers, ...rows]),
+      `job-applications-${new Date().toISOString().split('T')[0]}.csv`);
+  }
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `job-applications-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Import applications from a CSV exported by this page (older exports
+  // without the Notes column work too). Duplicates are skipped.
+  async importFromCSV() {
+    const file = await CsvUtils.pickFile();
+    if (!file) return;
+
+    const rows = CsvUtils.parseObjects(file.text);
+    const applications = [];
+    let invalid = 0;
+
+    for (const row of rows) {
+      const jobTitle = CsvUtils.column(row, 'job title', 'title');
+      const appliedDate = CsvUtils.parseDate(CsvUtils.column(row, 'applied date', 'date'));
+      if (!jobTitle || !appliedDate) {
+        invalid++;
+        continue;
+      }
+
+      applications.push({
+        jobTitle,
+        company: CsvUtils.column(row, 'company'),
+        workType: CsvUtils.column(row, 'work type').toLowerCase().replace('on-site', 'onsite') || null,
+        salary: CsvUtils.column(row, 'salary'),
+        location: CsvUtils.column(row, 'location'),
+        appliedDate: appliedDate.toISOString(),
+        status: this.normalizeStatus(CsvUtils.column(row, 'status')),
+        jobUrl: CsvUtils.column(row, 'job url', 'url'),
+        notes: CsvUtils.column(row, 'notes')
+      });
+    }
+
+    if (applications.length === 0) {
+      alert(`No applications found in "${file.name}". Please choose a CSV exported from this page.`);
+      return;
+    }
+
+    if (!confirm(`Import ${applications.length} application(s) from "${file.name}"? Applications you already have will be skipped.`)) {
+      return;
+    }
+
+    const result = await chrome.runtime.sendMessage({ action: 'importJobApplications', applications });
+    if (!result || result.error) {
+      alert('Import failed: ' + (result?.error || 'no response from the extension'));
+      return;
+    }
+
+    await this.loadData();
+    this.filterApplications();
+    this.renderStats();
+
+    const notes = [
+      result.skipped ? `${result.skipped} already existed` : '',
+      invalid ? `${invalid} row(s) had no title or date` : ''
+    ].filter(Boolean).join(', ');
+    alert(`Imported ${result.added} application(s)` + (notes ? ` (${notes}).` : '.'));
+  }
+
+  // Accept the stored values and the labels this page displays
+  normalizeStatus(status) {
+    const value = status.trim().toLowerCase();
+    if (value === 'submitted' || value === 'applied' || value === '') return 'applied';
+    if (value === 'needs completion' || value === 'draft') return 'draft';
+    return value;
   }
 
   getWorkTypeBadge(workType) {
@@ -226,16 +291,6 @@ class ApplicationsTracker {
     } catch {
       return '';
     }
-  }
-
-  // Quote a CSV cell: double embedded quotes, and prefix values that
-  // spreadsheet apps would treat as formulas (CSV injection)
-  csvCell(value) {
-    let text = value === null || value === undefined ? '' : String(value);
-    if (/^[=+\-@\t\r]/.test(text)) {
-      text = "'" + text;
-    }
-    return `"${text.replace(/"/g, '""')}"`;
   }
 
   async deleteApplication(appId) {

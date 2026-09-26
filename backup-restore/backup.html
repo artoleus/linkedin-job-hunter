@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backup & Restore - LinkedIn Job Hunter</title>
+  <link rel="stylesheet" href="../applications/applications.css">
+  <style>
+    .panel {
+      background: white;
+      padding: 24px 30px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .panel h2 { font-size: 18px; margin-bottom: 8px; color: #2d3748; }
+    .panel p { color: #555; font-size: 14px; margin-bottom: 14px; }
+    .panel ol { margin: 0 0 0 20px; font-size: 14px; color: #555; }
+    .panel li { margin-bottom: 6px; }
+    .panel a { color: #0077b5; }
+    .warning { color: #b45309 !important; }
+    #status { font-size: 14px; margin-top: 12px; white-space: pre-line; }
+    #status.ok { color: #00802b; }
+    #status.error { color: #d93025; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>🔄 Backup &amp; Restore</h1>
+      <p class="subtitle">Move your settings, applications and connection history to another computer</p>
+    </header>
+
+    <div class="panel">
+      <h2>Settings</h2>
+      <p>Saves your target roles, keywords, limits, salary and work-type preferences to a file you can import on another computer.</p>
+      <p class="warning">The file includes your auto-fill name, email and phone number, so keep it private.</p>
+      <div class="control-buttons">
+        <button id="exportSettingsBtn" class="btn btn-primary">📥 Export Settings</button>
+        <button id="importSettingsBtn" class="btn btn-secondary">📤 Import Settings</button>
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Moving to another computer</h2>
+      <ol>
+        <li>Here, export your settings, then use <strong>Export CSV</strong> on the
+          <a href="../applications/applications.html">Applications</a> and
+          <a href="../analytics/analytics.html">Connection Analytics</a> pages (with filters set to show everything).</li>
+        <li>On the new computer, install the extension and open this page from the popup.</li>
+        <li>Import the settings file here, then use <strong>Import CSV</strong> on the Applications and Connection Analytics pages.
+          Anything you already have is skipped, so importing the same file twice is safe.</li>
+      </ol>
+    </div>
+  </div>
+
+  <script src="../shared/csv.js"></script>
+  <script src="backup.js"></script>
+</body>
+</html>

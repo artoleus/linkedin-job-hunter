@@ -163,6 +163,11 @@ class PopupController {
       this.viewApplications();
     });
 
+    // Backup & restore page
+    document.getElementById('viewBackup').addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('backup-restore/backup.html') });
+    });
+
     // Expand network button
     document.getElementById('expandNetwork').addEventListener('click', () => {
       this.expandNetwork();
