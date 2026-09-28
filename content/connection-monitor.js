@@ -1,402 +1,245 @@
-// Connection Status Monitor - Detects accepted connections
+// Connection Status Monitor - finds out which invitations were accepted.
+//
+// "Check Accepted Connections" opens your sent invitations (anyone still
+// listed there is still pending), then your connections page (anyone listed
+// there accepted). People are recognised by their profile link (/in/...),
+// which every LinkedIn layout has, falling back to an exact name match on
+// that person's own link - never by searching the page's text, which also
+// contains suggestions such as "People you may know".
+
+const CONNECTION_CHECK_KEY = 'connectionCheckPending';
+const SENT_PAGE_URL = 'https://www.linkedin.com/mynetwork/invitation-manager/sent/';
+const CONNECTIONS_PAGE_URL = 'https://www.linkedin.com/mynetwork/invite-connect/connections/';
 
 class ConnectionMonitor {
   constructor(storage) {
     this.storage = storage;
     this.isMonitoring = false;
-    this.lastCheckTime = null;
     this.init();
   }
 
   async init() {
     // Withdrawing old invitations also works on the sent page; don't navigate away from it
     if (window.InviteWithdrawer?.hasPendingTask()) return;
+    // Only as part of a check the user started: don't scroll pages they're just browsing
+    if (!this.checkRequested()) return;
 
-    // Check if we're on the sent invitations page
-    if (window.location.href.includes('/mynetwork/invitation-manager/sent/')) {
-      console.log('[Connection Monitor] On sent invitations page, checking status...');
+    if (location.pathname.startsWith('/mynetwork/invitation-manager/sent')) {
       await this.checkSentInvitations();
-    }
-    // Check if we're on the connections page
-    else if (window.location.href.includes('/mynetwork/invite-connect/connections/')) {
-      console.log('[Connection Monitor] On connections page, checking for accepted...');
+    } else if (location.pathname.startsWith('/mynetwork/invite-connect/connections')) {
       await this.checkConnectionsPage();
     }
   }
 
-  // Check sent invitations page to see what's still pending
+  // A check started with "Check Accepted Connections" (in the last 5 minutes)
+  checkRequested() {
+    try {
+      const task = JSON.parse(localStorage.getItem(CONNECTION_CHECK_KEY) || 'null');
+      return !!task && Date.now() - task.timestamp < 5 * 60 * 1000;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async pendingRequests() {
+    const result = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
+    return (result?.analytics?.requests || []).filter(req => req.status === 'pending');
+  }
+
+  // ---- Reading people off the page ------------------------------------------
+
+  isVisible(el) {
+    return !!el && el.getClientRects().length > 0;
+  }
+
+  // The page plus LinkedIn's shadow-DOM layer and same-origin "/preload/" frame
+  queryAllDeep(selector) {
+    const roots = [document];
+    const interop = document.querySelector('#interop-outlet');
+    if (interop?.shadowRoot) roots.push(interop.shadowRoot);
+    for (const frame of document.querySelectorAll('iframe[src*="/preload/"]')) {
+      try {
+        if (frame.contentDocument) roots.push(frame.contentDocument);
+      } catch (error) {
+        // Not same-origin: nothing we can reach
+      }
+    }
+    return roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
+  }
+
+  // Everyone listed on the page: [{ slug, name }], one per profile.
+  // Sidebars, the header and messaging are left out.
+  listedPeople() {
+    const people = new Map();
+    const links = this.queryAllDeep('a[href*="/in/"]')
+      .filter(a => this.isVisible(a) &&
+                   !a.closest('aside, header, nav, footer, #msg-overlay, [class*="msg-overlay"], [role="dialog"]'));
+
+    for (const link of links) {
+      const slug = Safety.profileSlug(link.href);
+      if (!slug) continue;
+      const name = this.nameFromLink(link);
+      const known = people.get(slug);
+      if (!known) people.set(slug, { slug, name });
+      else if (!known.name && name) known.name = name;
+    }
+    return Array.from(people.values());
+  }
+
+  // The person's name from their profile link: its visible name, else the
+  // first line of its text, else its label ("View Jane Doe's profile")
+  nameFromLink(link) {
+    const clean = (text) => TextUtils.dedupeRepeatedText(text || '').trim();
+    const visible = link.querySelector('span[aria-hidden="true"], [data-anonymize="person-name"]');
+    const firstLine = (link.innerText || link.textContent || '').split('\n').map(line => line.trim()).find(Boolean);
+    const label = (link.getAttribute('aria-label') || '').replace(/^view\s+/i, '').replace(/[’']s\s+profile.*$/i, '');
+    return [visible?.textContent, firstLine, label].map(clean)
+      .find(text => text.length >= 3 && text.length <= 80 && !/^(message|connect|follow|pending|withdraw)$/i.test(text)) || '';
+  }
+
+  // Whether a pending request is one of the listed people
+  isListed(request, people) {
+    const slug = Safety.profileSlug(request.profileUrl);
+    if (slug) return people.some(person => person.slug === slug);
+    // No profile link saved: an exact name match on someone's own link
+    const name = Safety.normalize(request.fullName);
+    return !!name && name !== 'unknown' && people.some(person => Safety.normalize(person.name) === name);
+  }
+
+  // Wait for the list to appear, then scroll and press "Show more" until
+  // everyone we need has loaded or nothing more loads
+  async loadPeople(isDone, maxRounds = 15) {
+    await this.waitFor(() => this.listedPeople().length > 0, 20000);
+    let people = this.listedPeople();
+
+    for (let round = 0; round < maxRounds && !isDone(people); round++) {
+      const before = people.length;
+      window.scrollTo(0, document.body.scrollHeight);
+      for (const scroller of document.querySelectorAll('main, .scaffold-finite-scroll, [class*="scaffold-layout__main"]')) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+      const more = this.queryAllDeep('button')
+        .find(btn => this.isVisible(btn) && !btn.disabled && /^(show|load|see) more/i.test(btn.textContent.trim()));
+      if (more) more.click();
+      await this.pause(1500, 3000);
+      people = this.listedPeople();
+      if (people.length === before && !more) break;
+    }
+    window.scrollTo(0, 0);
+    return people;
+  }
+
+  // ---- Sent invitations -------------------------------------------------------
+
+  // Anyone still listed here is still pending; the rest may have accepted,
+  // which the connections page confirms
   async checkSentInvitations() {
     try {
-      // Get all pending connection requests from analytics
-      const result = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
-      const analytics = result.analytics || { requests: [] };
-      const pendingRequests = analytics.requests.filter(req => req.status === 'pending');
-
-      if (pendingRequests.length === 0) {
+      const pending = await this.pendingRequests();
+      if (pending.length === 0) {
         console.log('[Connection Monitor] No pending requests to check');
+        this.finishCheck({ pending: 0, accepted: 0 });
         return;
       }
 
-      console.log('[Connection Monitor] Checking', pendingRequests.length, 'pending requests on sent invitations page...');
+      const people = await this.loadPeople(() => false);
+      const notListed = pending.filter(request => !this.isListed(request, people));
+      console.log(`[Connection Monitor] Sent invitations page lists ${people.length} people; ` +
+                  `${pending.length - notListed.length} of ${pending.length} pending requests still waiting`);
 
-      // Wait for page to load
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Find all invitation cards on the page - try multiple selectors
-      let invitationCards = [];
-
-      const selectors = [
-        'li[data-chameleon-result-urn]',
-        'li.invitation-card',
-        'li.mn-invitation-card',
-        'li[class*="reusable-search__result"]',
-        'ul.reusable-search__entity-result-list li',
-        '[data-view-name="sent-invitations-list"] li',
-        '.artdeco-list li'
-      ];
-
-      console.log('[Connection Monitor] Trying', selectors.length, 'different selectors...');
-
-      for (const selector of selectors) {
-        invitationCards = document.querySelectorAll(selector);
-        console.log('[Connection Monitor] Selector "' + selector + '" found', invitationCards.length, 'cards');
-        if (invitationCards.length > 0) {
-          console.log('[Connection Monitor] ✅ Using selector:', selector);
-          break;
-        }
+      if (people.length === 0) {
+        console.warn('[Connection Monitor] ⚠️ No invitations found on the sent page - LinkedIn may have changed it. Checking connections anyway.');
       }
 
-      if (invitationCards.length === 0) {
-        console.warn('[Connection Monitor] ⚠️ No invitation cards found with any selector!');
-        console.warn('[Connection Monitor] Available list elements:', document.querySelectorAll('li').length);
-        console.warn('[Connection Monitor] Available ul elements:', document.querySelectorAll('ul').length);
-
-        // Try to find ANY list items that might contain names
-        const allLi = document.querySelectorAll('li');
-        console.warn('[Connection Monitor] Checking all', allLi.length, 'li elements for names...');
-
-        // Filter to only list items that contain what looks like a name
-        invitationCards = Array.from(allLi).filter(li => {
-          const text = li.textContent;
-          return text.includes('Sent today') || text.includes('Withdraw') ||
-                 (text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length < 500);
-        });
-
-        console.warn('[Connection Monitor] Found', invitationCards.length, 'li elements that might be invitation cards');
+      // Only move on to the connections page as part of a check the user started
+      if (this.checkRequested() && notListed.length > 0) {
+        console.log('[Connection Monitor] 🔗 Checking your connections for', notListed.length, 'people...');
+        localStorage.setItem(CONNECTION_CHECK_KEY, JSON.stringify({ timestamp: Date.now(), stage: 'connections' }));
+        location.href = CONNECTIONS_PAGE_URL;
+      } else if (this.checkRequested()) {
+        this.finishCheck({ pending: pending.length, accepted: 0 });
       }
-
-      // Check each pending request against the sent invitations
-      let stillPendingCount = 0;
-      const foundInSent = new Set();
-
-      for (const request of pendingRequests) {
-        console.log('[Connection Monitor] 🔄 Checking request:', request.fullName, '(ID:', request.id + ')');
-        const found = await this.checkInvitationStatus(request, invitationCards);
-
-        if (found) {
-          // Found in sent invitations and still pending
-          stillPendingCount++;
-          foundInSent.add(request.id);
-        } else {
-          // Not found in sent invitations - might be accepted or declined
-          console.log('[Connection Monitor] 📋', request.fullName, 'not in sent invitations');
-        }
-      }
-
-      console.log('[Connection Monitor] ✅ Sent invitations check complete:',
-                  stillPendingCount, 'found in sent invitations,',
-                  (pendingRequests.length - stillPendingCount), 'not found (need to check connections)');
-
-      // If some requests weren't found in sent invitations, check connections page
-      if (stillPendingCount < pendingRequests.length) {
-        console.log('[Connection Monitor] 🔗 Navigating to connections page to check for acceptances...');
-        window.location.href = 'https://www.linkedin.com/mynetwork/invite-connect/connections/';
-        return;
-      }
-
-      console.log('[Connection Monitor] ✅ All pending requests are still in sent invitations (none accepted yet)');
-
     } catch (error) {
       console.error('[Connection Monitor] Error checking sent invitations:', error);
     }
   }
 
-  // Check connections page to see who has accepted
+  // ---- Connections ------------------------------------------------------------
+
   async checkConnectionsPage() {
     try {
-      // Get all pending connection requests from analytics
-      const result = await chrome.runtime.sendMessage({ action: 'getConnectionAnalytics' });
-      const analytics = result.analytics || { requests: [] };
-      const pendingRequests = analytics.requests.filter(req => req.status === 'pending');
-
-      if (pendingRequests.length === 0) {
+      const pending = await this.pendingRequests();
+      if (pending.length === 0) {
         console.log('[Connection Monitor] No pending requests to check for acceptance');
+        this.finishCheck({ pending: 0, accepted: 0 });
         return;
       }
 
-      console.log('[Connection Monitor] Checking', pendingRequests.length, 'pending requests on connections page...');
+      // Newest connections come first, so keep loading until every pending
+      // person is found or the list ends
+      const people = await this.loadPeople(list => pending.every(request => this.isListed(request, list)));
+      const accepted = pending.filter(request => this.isListed(request, people));
 
-      // Wait for page to load and scroll to trigger lazy loading
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      // Scroll down to load more connections
-      console.log('[Connection Monitor] Scrolling to load connections...');
-      window.scrollTo(0, 500);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      window.scrollTo(0, 1000);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Find all connection cards - based on actual LinkedIn structure
-      let connectionCards = [];
-
-      // LinkedIn's connections page uses these patterns:
-      const selectors = [
-        // Try the most specific first
-        'li.mn-connection-card',
-        'li[class*="mn-connection-card"]',
-        // Grid layout items
-        'li.artdeco-list__item',
-        'ul.mn-connections__connections-list li',
-        // Generic patterns
-        'li.reusable-search__result-container',
-        'li[data-chameleon-result-urn]',
-        'ul.reusable-search__entity-result-list li',
-        '[data-view-name="connections-list"] li',
-        '.scaffold-finite-scroll__content li'
-      ];
-
-      console.log('[Connection Monitor] Trying', selectors.length, 'different selectors for connections...');
-
-      for (const selector of selectors) {
-        connectionCards = document.querySelectorAll(selector);
-        console.log('[Connection Monitor] Selector "' + selector + '" found', connectionCards.length, 'cards');
-        if (connectionCards.length > 0) {
-          console.log('[Connection Monitor] ✅ Using selector:', selector);
-          break;
-        }
+      for (const request of accepted) {
+        console.log('[Connection Monitor] ✅', request.fullName, 'is now a connection');
+        await chrome.runtime.sendMessage({ action: 'updateConnectionStatus', requestId: request.id, status: 'accepted' });
       }
 
-      // If still nothing, try to find list items with "Message" buttons (connections have message buttons)
-      if (connectionCards.length === 0) {
-        console.warn('[Connection Monitor] ⚠️ No connection cards found with any selector!');
-        console.warn('[Connection Monitor] Trying to find elements with Message buttons...');
-
-        const allLi = document.querySelectorAll('li');
-        connectionCards = Array.from(allLi).filter(li => {
-          return li.textContent.includes('Message') && li.textContent.match(/[A-Z][a-z]+ [A-Z][a-z]+/);
-        });
-
-        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements with Message buttons');
+      if (people.length === 0) {
+        console.warn('[Connection Monitor] ⚠️ No connections found on the page - LinkedIn may have changed it. Page summary:', this.describePage());
       }
-
-      // Last resort - find elements that look like connection entries
-      if (connectionCards.length === 0) {
-        console.warn('[Connection Monitor] Trying to find any list items that look like connections...');
-
-        const allLi = document.querySelectorAll('li');
-        connectionCards = Array.from(allLi).filter(li => {
-          const text = li.textContent;
-          // Must have a name pattern and be reasonable length
-          return text.match(/[A-Z][a-z]+ [A-Z][a-z]+/) && text.length > 50 && text.length < 800;
-        });
-
-        console.warn('[Connection Monitor] Found', connectionCards.length, 'li elements that might be connections');
-      }
-
-      let acceptedCount = 0;
-
-      // If we have connection cards, search within them
-      if (connectionCards.length > 0) {
-        for (const request of pendingRequests) {
-          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in', connectionCards.length, 'connection cards...');
-          let found = false;
-
-          for (const card of connectionCards) {
-            const cardText = card.textContent;
-
-            if (this.namesMatch(cardText, request.fullName)) {
-              console.log('[Connection Monitor] ✅', request.fullName, 'found in connections - ACCEPTED!');
-              found = true;
-              acceptedCount++;
-
-              await chrome.runtime.sendMessage({
-                action: 'updateConnectionStatus',
-                requestId: request.id,
-                status: 'accepted'
-              });
-
-              break;
-            }
-          }
-
-          if (!found) {
-            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in visible connection cards');
-          }
-        }
-      } else {
-        // Fallback: search the main content area for names
-        console.warn('[Connection Monitor] No cards found, using page content search fallback...');
-
-        // Try to find the main connections content area
-        const mainContent = document.querySelector('main') ||
-                           document.querySelector('.scaffold-finite-scroll__content') ||
-                           document.querySelector('[data-view-name="connections-list"]') ||
-                           document.body;
-
-        const contentText = mainContent.textContent;
-        console.warn('[Connection Monitor] Searching in main content (', contentText.length, 'characters)');
-
-        // On connections page, if we're at /mynetwork/invite-connect/connections/
-        // and a name appears in the content, it's very likely they're a connection
-        const isConnectionsPage = window.location.href.includes('/mynetwork/invite-connect/connections/');
-
-        for (const request of pendingRequests) {
-          console.log('[Connection Monitor] 🔍 Looking for', request.fullName, 'in page content...');
-
-          if (this.namesMatch(contentText, request.fullName)) {
-            if (isConnectionsPage) {
-              console.log('[Connection Monitor] ✅', request.fullName, 'found on connections page - marking as ACCEPTED!');
-              acceptedCount++;
-
-              await chrome.runtime.sendMessage({
-                action: 'updateConnectionStatus',
-                requestId: request.id,
-                status: 'accepted'
-              });
-            } else {
-              console.log('[Connection Monitor] ⚠️', request.fullName, 'found but not on connections page - skipping');
-            }
-          } else {
-            console.log('[Connection Monitor] ℹ️', request.fullName, 'not found in page content');
-          }
-        }
-
-        console.warn('[Connection Monitor] Page content search complete. This method works but card selectors would be more accurate.');
-      }
-
-      console.log('[Connection Monitor] ✅ Connections page check complete:', acceptedCount, 'accepted');
-
-      if (acceptedCount === 0 && pendingRequests.length > 0) {
-        console.warn('[Connection Monitor] ⚠️ No acceptances found. This could mean:');
-        console.warn('  1. No connections have been accepted yet');
-        console.warn('  2. Accepted connections are not on the first page');
-        console.warn('  3. Card selectors need adjustment');
-        console.warn('[Connection Monitor] Sample card text:', connectionCards.length > 0 ? connectionCards[0].textContent.substring(0, 200) : 'No cards found');
-      }
-
-      // Clear progress
-      localStorage.removeItem('connectionCheckProgress');
-
+      console.warn(`[Connection Monitor] Checked ${people.length} connections: ${accepted.length} of ${pending.length} pending requests accepted`);
+      this.finishCheck({ pending: pending.length, accepted: accepted.length, checked: people.length });
     } catch (error) {
       console.error('[Connection Monitor] Error checking connections page:', error);
     }
   }
 
-  // Main entry point - called when button is clicked
-  async checkAcceptedConnections() {
-    // Navigate to sent invitations page first
-    console.log('[Connection Monitor] Starting connection check process...');
-    window.location.href = 'https://www.linkedin.com/mynetwork/invitation-manager/sent/';
+  // For the console when nothing is found
+  describePage() {
+    const links = this.queryAllDeep('a[href*="/in/"]');
+    return `url=${location.pathname} | profile links=${links.length} (visible ${links.filter(a => this.isVisible(a)).length}) | ` +
+           `main=${!!document.querySelector('main')} | sample="${(links[0]?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
   }
 
-  async checkInvitationStatus(request, invitationCards) {
-    // Look for the person's name in the invitation cards
-    console.log('[Connection Monitor] 🔍 Searching for', request.fullName, 'in', invitationCards.length, 'invitation cards');
+  finishCheck(summary) {
+    localStorage.removeItem(CONNECTION_CHECK_KEY);
+    chrome.runtime.sendMessage({ action: 'saveConnectionCheckSummary', summary }).catch(() => {});
+  }
 
-    for (const card of invitationCards) {
-      // Try multiple selectors for name element
-      let nameElement = card.querySelector('[class*="name"]');
+  // ---- Starting a check ---------------------------------------------------------
 
-      if (!nameElement) {
-        nameElement = card.querySelector('[data-anonymize="person-name"]');
-      }
-
-      if (!nameElement) {
-        nameElement = card.querySelector('span.name, .mn-connection-card__name, .invitation-card__name');
-      }
-
-      if (!nameElement) {
-        nameElement = card.querySelector('span[aria-hidden="true"]');
-      }
-
-      if (!nameElement) {
-        // Try to find any prominent text element that might be the name
-        const spans = card.querySelectorAll('span');
-        for (const span of spans) {
-          const text = span.textContent.trim();
-          if (text.length > 3 && text.includes(' ') && !text.includes('Sent') && !text.includes('Withdraw')) {
-            nameElement = span;
-            break;
-          }
-        }
-      }
-
-      if (!nameElement) {
-        console.log('[Connection Monitor] ⚠️ No name element found in card:', card.innerHTML.substring(0, 200));
-        continue;
-      }
-
-      const cardName = nameElement.textContent.trim();
-      console.log('[Connection Monitor] 📝 Found name in card:', cardName);
-
-      // Check if names match (fuzzy match)
-      if (this.namesMatch(cardName, request.fullName)) {
-        console.log('[Connection Monitor] ✅ Found matching card for', request.fullName);
-        // Check if invitation was withdrawn or is still pending
-        const withdrawnText = card.textContent.toLowerCase();
-
-        if (withdrawnText.includes('withdrawn') || withdrawnText.includes('expired')) {
-          console.log('[Connection Monitor] 🔴', request.fullName, 'invitation withdrawn/expired');
-          await chrome.runtime.sendMessage({
-            action: 'updateConnectionStatus',
-            requestId: request.id,
-            status: 'declined'
-          });
-          return true;
-        }
-
-        // Still pending
-        console.log('[Connection Monitor] ⏳', request.fullName, 'still pending');
-        return true;
-      }
+  // "Check Accepted Connections": start at the sent invitations page
+  async checkAllPendingConnections() {
+    console.log('[Connection Monitor] 🔍 Checking all pending connections...');
+    localStorage.setItem(CONNECTION_CHECK_KEY, JSON.stringify({ timestamp: Date.now(), stage: 'sent' }));
+    if (location.pathname.startsWith('/mynetwork/invitation-manager/sent')) {
+      await this.checkSentInvitations();
+    } else {
+      location.href = SENT_PAGE_URL;
     }
-
-    console.log('[Connection Monitor] ❌ Not found in sent invitations:', request.fullName);
-    return false; // Not found in sent invitations
   }
 
-  async checkIfConnection(fullName) {
-    // Check if person is now in connections
-    // If they're not in "sent invitations" anymore, we should NOT assume they were accepted
-    // They might have:
-    // 1. Declined the invitation
-    // 2. Let it expire
-    // 3. Actually accepted
-
-    // We need to actually verify they're in connections
-    console.log('[Connection Monitor] 🔍 Would need to check connections page for', fullName);
-    console.log('[Connection Monitor] ⚠️ Cannot verify acceptance without checking connections page');
-
-    // For now, do NOT mark as accepted
-    // This is more conservative and prevents false positives
-    return false; // Don't assume acceptance
+  async checkAcceptedConnections() {
+    await this.checkAllPendingConnections();
   }
 
   namesMatch(text, fullName) {
     return TextUtils.namesMatch(text, fullName);
   }
 
-  // Manual method to check all pending connections
-  async checkAllPendingConnections() {
-    console.log('[Connection Monitor] 🔍 Checking all pending connections...');
-
-    if (!window.location.href.includes('/mynetwork/')) {
-      console.log('[Connection Monitor] Navigating to My Network...');
-      window.location.href = 'https://www.linkedin.com/mynetwork/invitation-manager/sent/';
-      return;
+  async waitFor(check, timeoutMs = 6000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const result = check();
+      if (result) return result;
+      await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 100));
     }
+    return check() || null;
+  }
 
-    await this.checkAcceptedConnections();
+  pause(minMs, maxMs) {
+    return new Promise(resolve => setTimeout(resolve, minMs + Math.random() * (maxMs - minMs)));
   }
 }
 

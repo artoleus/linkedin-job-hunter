@@ -303,6 +303,11 @@ class BackgroundService {
           sendResponse({ matched: await this.withLock(() => this.markInvitationWithdrawn(request.person)) });
           break;
 
+        case 'saveConnectionCheckSummary':
+          await chrome.storage.local.set({ lastConnectionCheck: { ...request.summary, date: new Date().toISOString() } });
+          sendResponse({ success: true });
+          break;
+
         case 'saveWithdrawalSummary':
           await chrome.storage.local.set({ lastWithdrawal: { ...request.summary, date: new Date().toISOString() } });
           sendResponse({ success: true });

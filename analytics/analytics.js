@@ -23,7 +23,7 @@ class AnalyticsDashboard {
       // acceptances are found in LinkedIn tabs
       chrome.storage.onChanged.addListener(async (changes, area) => {
         if (area !== 'local') return;
-        if (changes.connectionAnalytics || changes.pendingWelcome || changes.settings) {
+        if (changes.connectionAnalytics || changes.pendingWelcome || changes.settings || changes.lastConnectionCheck) {
           await this.loadData();
           this.render();
           this.filterRequests();
@@ -41,8 +41,9 @@ class AnalyticsDashboard {
 
     const { settings } = await chrome.runtime.sendMessage({ action: 'getSettings' });
     this.settings = settings || {};
-    const stored = await chrome.storage.local.get(['pendingWelcome']);
+    const stored = await chrome.storage.local.get(['pendingWelcome', 'lastConnectionCheck']);
     this.pendingWelcome = stored.pendingWelcome || null;
+    this.lastConnectionCheck = stored.lastConnectionCheck || null;
     console.log('[Analytics] Loaded', this.analytics.requests.length, 'connection requests');
   }
 
@@ -189,7 +190,7 @@ class AnalyticsDashboard {
         // Send message to content script
         await chrome.tabs.sendMessage(linkedInTab.id, { action: 'checkAcceptedConnections' });
 
-        alert('Navigating to check connections... This will check your sent invitations and update accepted connections. Please wait a moment, then refresh this page.');
+        alert('Checking in the LinkedIn tab: it looks at your sent invitations, then your connections. This page updates by itself when it has finished (usually within a minute).');
 
       } catch (error) {
         console.error('[Analytics] Error checking connections:', error);
@@ -234,6 +235,12 @@ class AnalyticsDashboard {
     else hint.push('No new connections waiting for a welcome message.');
     if (upcoming) hint.push(`${upcoming} more will be suggested once the waiting time passes.`);
     if (sent) hint.push(`${sent} sent so far.`);
+    const last = this.lastConnectionCheck;
+    if (last) {
+      const when = new Date(last.date).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      hint.push(`Last check (${when}): ${last.accepted} of ${last.pending} pending accepted` +
+                (last.checked !== undefined ? `, ${last.checked} connections looked at.` : '.'));
+    }
     hint.push('Use "Check Accepted Connections" below to find new acceptances.');
     document.getElementById('welcomeHint').textContent = hint.join(' ');
 
