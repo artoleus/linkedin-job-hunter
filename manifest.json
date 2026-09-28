@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobTrail - Job Search Assistant",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Organise your job search: track applications, remember your answers to application questions, and follow up with your network. Not affiliated with LinkedIn.",
   "permissions": [
     "storage",

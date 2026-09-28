@@ -335,7 +335,7 @@ class BackgroundService {
           break;
 
         case 'claimDraftCompletion':
-          sendResponse({ task: await this.withLock(() => this.claimDraftCompletion(sender.tab?.id)) });
+          sendResponse({ task: await this.withLock(() => this.claimDraftCompletion(sender.tab?.id, sender.tab?.url || sender.url)) });
           break;
 
         case 'draftCompletionResult':
@@ -855,14 +855,25 @@ class BackgroundService {
 
   // The job this tab should complete, handed out once per job so a reload
   // can't submit it twice
-  async claimDraftCompletion(tabId) {
+  async claimDraftCompletion(tabId, pageUrl = '') {
     const { draftCompletion: run } = await chrome.storage.local.get(['draftCompletion']);
     if (!run || !tabId || run.tabId !== tabId) return null;
     if (Date.now() - run.lastActivity > DRAFT_RUN_TIMEOUT_MS) {
       await this.endDraftCompletion('Stopped: no progress for 10 minutes');
       return null;
     }
-    if (run.claimedIndex >= run.index) return null;
+    if (run.claimedIndex >= run.index) {
+      // LinkedIn's newer "Continue"/"Easy Apply" is a link, and clicking it can
+      // load the job's application page afresh: carry on there, once. (A
+      // submitted application shows as applied, so this can't submit twice.)
+      const jobId = (Pipeline.jobViewUrl({ jobUrl: run.items[run.index]?.url }) || '').match(/\d+/)?.[0];
+      const sameJob = jobId && Pipeline.jobViewUrl({ jobUrl: pageUrl })?.includes(`/${jobId}/`);
+      if (!sameJob || run.resumedIndex === run.index) return null;
+      run.resumedIndex = run.index;
+      run.lastActivity = Date.now();
+      await chrome.storage.local.set({ draftCompletion: run });
+      return { ...run.items[run.index], position: run.index + 1, total: run.items.length, resumed: true };
+    }
 
     run.claimedIndex = run.index;
     run.lastActivity = Date.now();

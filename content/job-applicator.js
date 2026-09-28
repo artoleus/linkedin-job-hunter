@@ -702,16 +702,21 @@ class JobApplicator {
     ].find(usable);
     if (byId) return byId;
 
-    // Buttons and links on the job itself (not job cards, forms or messaging)
-    const label = (el) => `${el.getAttribute('aria-label') || ''} ${el.textContent}`.replace(/\s+/g, ' ').trim();
-    const controls = Array.from(document.querySelectorAll('button, a[role="button"], a[href*="/apply"]'))
-      .filter(el => usable(el) && !el.closest('.job-card-container, [role="dialog"], [role="alertdialog"], #msg-overlay, [class*="msg-overlay"]'));
-    const topCard = '.jobs-unified-top-card, .job-details-jobs-unified-top-card, .jobs-details-top-card, .jobs-apply-button--top-card, .jobs-s-apply, .jobs-details';
+    // LinkedIn's newer job page: a link with componentkey="jdp-continue-button-<id>"
+    // (or an apply-button equivalent) and scrambled class names
+    const byKey = this.queryAllDeep('[componentkey*="continue-button"], [componentkey*="apply-button"]')
+      .find(el => usable(el) && /easy apply|continue|resume|apply/i.test(el.textContent));
+    if (byKey) return byKey;
+
+    // Buttons and links on the job itself (not job cards, sidebars, forms or messaging)
+    const text = (el) => el.textContent.replace(/\s+/g, ' ').trim();
+    const label = (el) => `${el.getAttribute('aria-label') || ''} ${text(el)}`;
+    const controls = Array.from(document.querySelectorAll('button, a'))
+      .filter(el => usable(el) && !el.closest('.job-card-container, aside, footer, nav, header, [role="dialog"], [role="alertdialog"], #msg-overlay, [class*="msg-overlay"]'));
 
     return controls.find(el => /easy apply/i.test(label(el))) ||
            // A saved application: "Continue", "Continue applying" or "Resume"
-           controls.find(el => /^(continue( applying| application)?|resume( application)?)$/i.test(el.textContent.replace(/\s+/g, ' ').trim()) &&
-                               (/appl/i.test(el.getAttribute('aria-label') || '') || el.closest(topCard))) ||
+           controls.find(el => /^(continue( applying| application)?|resume( application)?)$/i.test(text(el))) ||
            null;
   }
 
@@ -784,22 +789,31 @@ class JobApplicator {
   async completeDraftOnPage(task) {
     const jobData = { jobTitle: task.jobTitle, company: task.company };
     await this.humanDelay(2000, 4000);
-    const button = await this.waitFor(() => this.findEasyApplyButton() || (this.alreadyApplied() && 'applied'), 15000);
 
-    if (!button) return { outcome: 'failed', detail: 'No Easy Apply button on the job page (it may have closed)' };
-    if (button === 'applied') {
-      await this.reportDraftApplied(jobData);
-      return { outcome: 'applied', detail: 'Already applied on LinkedIn' };
+    // Clicking "Continue" can load the job's application page afresh, with
+    // the form already open; carry on with that form
+    const reopened = task.resumed && await this.waitFor(() => this.findEasyApplyModal(), 10000);
+    if (!reopened) {
+      const button = await this.waitFor(() => this.findEasyApplyButton() || (this.alreadyApplied() && 'applied'), 15000);
+
+      if (!button) return { outcome: 'failed', detail: 'No Easy Apply or Continue button on the job page (it may have closed)' };
+      if (button === 'applied') {
+        await this.reportDraftApplied(jobData);
+        return { outcome: 'applied', detail: 'Already applied on LinkedIn' };
+      }
+
+      const salary = this.extractSalaryFromJobDetails();
+      if (salary) jobData.salary = salary;
+
+      if (this.findEasyApplyModal() && !await this.closeEasyApplyModal()) {
+        return { outcome: 'failed', detail: 'An application form was already open and could not be closed' };
+      }
+      console.warn('[Job Applicator] Opening the application with:', `"${button.textContent.replace(/\s+/g, ' ').trim()}"`);
+      button.click();
+      if (!await this.waitFor(() => this.findEasyApplyModal(), 12000)) {
+        return { outcome: 'failed', detail: `Clicked "${button.textContent.replace(/\s+/g, ' ').trim()}" but no application form opened` };
+      }
     }
-
-    const salary = this.extractSalaryFromJobDetails();
-    if (salary) jobData.salary = salary;
-
-    if (this.findEasyApplyModal() && !await this.closeEasyApplyModal()) {
-      return { outcome: 'failed', detail: 'An application form was already open and could not be closed' };
-    }
-    button.click();
-    await this.waitFor(() => this.findEasyApplyModal(), 8000);
     await this.humanDelay(1000, 2000);
 
     if (this.detectCoverLetterRequirement()) {
@@ -877,7 +891,8 @@ class JobApplicator {
                                  /apply to|easy apply|submit application|contact info/i.test(el.textContent)) ||
            // Newer layouts: a pop-up with the form's own step buttons
            candidates.find(el => Array.from(el.querySelectorAll('button')).some(btn =>
-             /continue to next step|review your application|submit application/i.test(btn.getAttribute('aria-label') || '')) &&
+             /continue to next step|review your application|submit application/i.test(btn.getAttribute('aria-label') || '') ||
+             /^(next|review|submit application)$/i.test(btn.textContent.replace(/\s+/g, ' ').trim())) &&
              /apply/i.test(el.textContent)) ||
            null;
   }
