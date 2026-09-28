@@ -695,14 +695,40 @@ class JobApplicator {
   // The job's Easy Apply button (it reads "Continue applying" or similar for
   // a saved application on some layouts)
   findEasyApplyButton() {
-    const candidates = [
+    const usable = (el) => el && this.isVisible(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+    const byId = [
       document.querySelector('#jobs-apply-button-id'),
-      document.querySelector('.jobs-apply-button--top-card button, button.jobs-apply-button--top-card'),
-      document.querySelector('button[aria-label*="Easy Apply"]'),
-      Array.from(document.querySelectorAll('button')).find(button =>
-        /easy apply|continue appl/i.test(button.textContent) && !button.closest('.job-card-container'))
-    ];
-    return candidates.find(button => button && this.isVisible(button) && !button.disabled) || null;
+      document.querySelector('.jobs-apply-button--top-card button, button.jobs-apply-button--top-card')
+    ].find(usable);
+    if (byId) return byId;
+
+    // Buttons and links on the job itself (not job cards, forms or messaging)
+    const label = (el) => `${el.getAttribute('aria-label') || ''} ${el.textContent}`.replace(/\s+/g, ' ').trim();
+    const controls = Array.from(document.querySelectorAll('button, a[role="button"], a[href*="/apply"]'))
+      .filter(el => usable(el) && !el.closest('.job-card-container, [role="dialog"], [role="alertdialog"], #msg-overlay, [class*="msg-overlay"]'));
+    const topCard = '.jobs-unified-top-card, .job-details-jobs-unified-top-card, .jobs-details-top-card, .jobs-apply-button--top-card, .jobs-s-apply, .jobs-details';
+
+    return controls.find(el => /easy apply/i.test(label(el))) ||
+           // A saved application: "Continue", "Continue applying" or "Resume"
+           controls.find(el => /^(continue( applying| application)?|resume( application)?)$/i.test(el.textContent.replace(/\s+/g, ' ').trim()) &&
+                               (/appl/i.test(el.getAttribute('aria-label') || '') || el.closest(topCard))) ||
+           null;
+  }
+
+  // The page plus the places LinkedIn's newer pages render pop-ups: the
+  // shadow-DOM layer (#interop-outlet) and the same-origin "/preload/" frame
+  queryAllDeep(selector) {
+    const roots = [document];
+    const interop = document.querySelector('#interop-outlet');
+    if (interop?.shadowRoot) roots.push(interop.shadowRoot);
+    for (const frame of document.querySelectorAll('iframe[src*="/preload/"]')) {
+      try {
+        if (frame.contentDocument) roots.push(frame.contentDocument);
+      } catch (error) {
+        // Not same-origin: nothing we can reach
+      }
+    }
+    return roots.flatMap(root => Array.from(root.querySelectorAll(selector)));
   }
 
   // Signs on the job page that you've already applied
@@ -728,18 +754,26 @@ class JobApplicator {
     } else {
       this.isRunning = true;
       this.completingDraftId = task.id;
+      let timer;
       try {
-        result = await this.completeDraftOnPage(task);
+        // Never let one job hold up the rest
+        const timeout = new Promise(resolve => {
+          timer = setTimeout(() => resolve({ outcome: 'failed', detail: 'Took too long - the form may have changed; try it by hand' }), 4 * 60 * 1000);
+        });
+        result = await Promise.race([this.completeDraftOnPage(task), timeout]);
       } catch (error) {
         console.error('[Job Applicator] Error completing draft:', error);
         result = { outcome: 'failed', detail: error.message };
       } finally {
+        clearTimeout(timer);
         this.isRunning = false;
         this.completingDraftId = null;
       }
     }
 
-    console.log('[Job Applicator] Draft result:', result);
+    console.warn('[Job Applicator] Draft result:', task.jobTitle, result);
+    // A form left open makes LinkedIn ask "Leave site?", which would stop the run here
+    if (this.findEasyApplyModal()) await this.closeEasyApplyModal();
     const { next } = await chrome.runtime.sendMessage({ action: 'draftCompletionResult', result }) || {};
     if (next) {
       await this.humanDelay(5000, 10000);
@@ -833,7 +867,7 @@ class JobApplicator {
   // The open Easy Apply form. The messaging panel also uses role="dialog", so
   // "the first dialog on the page" could be the wrong one.
   findEasyApplyModal() {
-    const candidates = Array.from(document.querySelectorAll(
+    const candidates = Array.from(this.queryAllDeep(
       '.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"]'))
       .filter(el => this.isVisible(el) &&
                     !el.closest('#msg-overlay, .msg-overlay-container, [class*="msg-overlay"]'));
@@ -841,6 +875,10 @@ class JobApplicator {
     return candidates.find(el => el.matches('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"]')) ||
            candidates.find(el => el.querySelector('.jobs-easy-apply-content, form') &&
                                  /apply to|easy apply|submit application|contact info/i.test(el.textContent)) ||
+           // Newer layouts: a pop-up with the form's own step buttons
+           candidates.find(el => Array.from(el.querySelectorAll('button')).some(btn =>
+             /continue to next step|review your application|submit application/i.test(btn.getAttribute('aria-label') || '')) &&
+             /apply/i.test(el.textContent)) ||
            null;
   }
 
@@ -1040,7 +1078,8 @@ class JobApplicator {
     let label = el.id ? modal.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
     if (!label) label = el.closest('label');
     if (!label && el.getAttribute('aria-labelledby')) {
-      label = document.getElementById(el.getAttribute('aria-labelledby').split(' ')[0]);
+      const labelId = el.getAttribute('aria-labelledby').split(' ')[0];
+      label = el.getRootNode().getElementById?.(labelId) || document.getElementById(labelId);
     }
     return this.readLabel(label) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
   }
@@ -1090,7 +1129,7 @@ class JobApplicator {
         // Type the answer, then pick the matching suggestion LinkedIn offers
         this.setInputValue(field.element, String(value), false);
         const suggestion = await this.waitFor(() => {
-          const options = Array.from(document.querySelectorAll('[role="listbox"] [role="option"], .basic-typeahead__selectable'))
+          const options = this.queryAllDeep('[role="listbox"] [role="option"], .basic-typeahead__selectable')
             .filter(option => this.isVisible(option));
           return options.find(option => TextUtils.normalize(option.textContent).includes(TextUtils.normalize(String(value)))) ||
                  options[0];
@@ -1189,7 +1228,7 @@ class JobApplicator {
     }
     dismiss.click();
 
-    const saveBtn = await this.waitFor(() => Array.from(document.querySelectorAll('[role="alertdialog"] button, [role="dialog"] button, .artdeco-modal button'))
+    const saveBtn = await this.waitFor(() => this.queryAllDeep('[role="alertdialog"] button, [role="dialog"] button, .artdeco-modal button')
       .find(btn => this.isVisible(btn) && !btn.closest('#msg-overlay, [class*="msg-overlay"]') &&
                    (btn.getAttribute('data-control-name') === 'save_application_btn' || /^save$/i.test(btn.textContent.trim()))), 4000);
     if (saveBtn) {
@@ -1207,11 +1246,11 @@ class JobApplicator {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       // Look for Done button in success modal
-      const doneBtn = document.querySelector('button[aria-label*="Done"], button.artdeco-modal__confirm-dialog-btn');
+      const doneBtn = this.queryAllDeep('button[aria-label*="Done"], button.artdeco-modal__confirm-dialog-btn').find(btn => this.isVisible(btn));
 
       // Also check button text content
       if (!doneBtn) {
-        const allButtons = document.querySelectorAll('button');
+        const allButtons = this.queryAllDeep('button');
         for (const button of allButtons) {
           if (button.textContent.trim().toLowerCase() === 'done') {
             console.log('[Job Applicator] Found Done button by text');
