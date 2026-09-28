@@ -78,6 +78,11 @@ class LinkedInJobHunter {
         this.jobApplicator.completeDraft(draftTask).catch(error => {
           console.error('[Job Hunter] Draft completion error:', error);
         });
+      } else if (JobApplicator.hasPendingTask()) {
+        // Auto Apply carrying on after going to the job search or the next page
+        this.jobApplicator.checkPendingApplying().catch(error => {
+          console.error('[Job Hunter] Auto Apply error:', error);
+        });
       } else if (InviteWithdrawer.hasPendingTask()) {
         this.inviteWithdrawer.checkPending().catch(error => {
           console.error('[Job Hunter] Withdrawal error:', error);

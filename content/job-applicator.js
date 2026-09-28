@@ -1,5 +1,7 @@
 // Job Application Automation with Easy Apply
 
+const JOB_APPLY_TASK_KEY = 'jobApplicationPending';
+
 class JobApplicator {
   constructor(storage) {
     this.storage = storage;
@@ -348,14 +350,47 @@ class JobApplicator {
   }
 
   // Start automated job application process
-  async startApplying() {
-    console.log('[Job Applicator] 🚀 startApplying() called');
+  // A run in progress survives page loads (going to the search page, or to
+  // the next page of results) through this task in localStorage
+  // Only in the tab the run started in (sessionStorage is per tab), so
+  // another LinkedIn tab never starts a second run
+  static hasPendingTask() {
+    try {
+      const task = JSON.parse(localStorage.getItem(JOB_APPLY_TASK_KEY) || 'null');
+      return !!task && Date.now() - task.timestamp < 3 * 60 * 1000 &&
+             sessionStorage.getItem(JOB_APPLY_TASK_KEY) === 'this-tab';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  savePendingTask(page) {
+    localStorage.setItem(JOB_APPLY_TASK_KEY, JSON.stringify({ page, timestamp: Date.now() }));
+    sessionStorage.setItem(JOB_APPLY_TASK_KEY, 'this-tab');
+  }
+
+  clearPendingTask() {
+    localStorage.removeItem(JOB_APPLY_TASK_KEY);
+    sessionStorage.removeItem(JOB_APPLY_TASK_KEY);
+  }
+
+  // Called on page load: carry on with a run that navigated here
+  async checkPendingApplying() {
+    if (!JobApplicator.hasPendingTask()) {
+      sessionStorage.removeItem(JOB_APPLY_TASK_KEY);
+      return;
+    }
+    const { page = 1 } = JSON.parse(localStorage.getItem(JOB_APPLY_TASK_KEY));
+    if (!location.pathname.startsWith('/jobs/search')) return;
+    console.log('[Job Applicator] Resuming Auto Apply on page', page);
+    await this.startApplying({ page });
+  }
+
+  async startApplying(resume = null) {
+    console.log('[Job Applicator] 🚀 startApplying() called', resume ? `(resuming on page ${resume.page})` : '');
 
     // Reload settings so changes saved in the popup take effect
     await this.init();
-    console.log('[Job Applicator] Settings:', this.settings);
-    console.log('[Job Applicator] Is running?', this.isRunning);
-    console.log('[Job Applicator] Daily limits:', this.dailyLimits);
 
     if (this.isRunning) {
       console.log('[Job Applicator] ⚠️ Already running, exiting');
@@ -363,45 +398,42 @@ class JobApplicator {
     }
 
     if (this.hasReachedDailyLimit()) {
-      console.log('[Job Applicator] ⚠️ Daily limit reached, exiting');
+      console.warn('[Job Applicator] Daily application limit reached');
+      this.clearPendingTask();
       return;
     }
 
     const targetRoles = this.settings.targetJobRoles || this.settings.targetRoles || [];
-    console.log('[Job Applicator] Target roles from settings:', targetRoles);
-
     if (targetRoles.length === 0) {
       console.error('[Job Applicator] ❌ No target job roles configured! Please add roles in settings.');
+      this.clearPendingTask();
       return;
     }
 
-    const keywords = targetRoles.join(' OR ');
-    const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keywords)}&f_AL=true`;
+    // Go to the job search first; the run starts there when the page has loaded
     const currentUrl = window.location.href;
-
-    console.log('[Job Applicator] Current URL:', currentUrl);
-    console.log('[Job Applicator] Target search URL:', searchUrl);
-
-    // Check if we need to navigate to the search page with keywords
     if (!currentUrl.includes('/jobs/search/') || !currentUrl.includes('keywords=')) {
       console.log('[Job Applicator] 🔄 Navigating to job search with keywords...');
-      console.log('[Job Applicator] Target roles:', targetRoles);
-      console.log('[Job Applicator] Search URL:', searchUrl);
+      this.savePendingTask(1);
       this.navigateToJobsSearch();
       return;
     }
 
     this.isRunning = true;
+    this.navigatingAway = false;
     this.processedJobs = new Set();
-    console.log('[Job Applicator] ✅ On search page, starting job processing...');
-    console.log('[Job Applicator] 🎯 Target roles:', targetRoles);
+    const firstPage = resume?.page || 1;
+    this.savePendingTask(firstPage);
+    console.log('[Job Applicator] ✅ On search page, starting job processing. Target roles:', targetRoles);
 
     try {
-      await this.processJobListings();
+      await this.processJobListings(firstPage);
     } catch (error) {
       console.error('[Job Applicator] ❌ Error during application process:', error);
     } finally {
       this.isRunning = false;
+      // Keep the task only when a page load will carry the run on
+      if (!this.navigatingAway) this.clearPendingTask();
       console.log('[Job Applicator] ✅ Finished, isRunning set to false');
     }
   }
@@ -466,128 +498,187 @@ class JobApplicator {
     }
   }
 
-  async processJobListings() {
+  // One element per job in the results list. LinkedIn only fills in the
+  // cards near the visible part of the list; the rest are empty placeholders
+  // (li[data-occludable-job-id]) until scrolled to.
+  findJobCards() {
+    const items = Array.from(document.querySelectorAll('li[data-occludable-job-id], .jobs-search-results__list-item, .job-card-container'))
+      .filter(el => !el.closest('[role="dialog"], aside'));
+    return items.filter(el => !items.some(other => other !== el && other.contains(el)));
+  }
+
+  // The filled-in card for a list entry, or null while it's still a placeholder
+  renderedCard(entry) {
+    if (!document.contains(entry)) return null;
+    const card = entry.matches('.job-card-container') ? entry : entry.querySelector('.job-card-container') || entry;
+    return this.extractJobTitle(card) !== 'Unknown Title' ? card : null;
+  }
+
+  // Stable id for a list entry, so each job is looked at once even though
+  // LinkedIn redraws the list (e.g. after an application)
+  jobKey(entry) {
+    const id = entry.getAttribute('data-occludable-job-id') || entry.getAttribute('data-job-id') ||
+               entry.querySelector('[data-job-id]')?.getAttribute('data-job-id');
+    if (id) return `id:${id}`;
+    const href = entry.querySelector('a[href*="/jobs/view/"], a[href*="currentJobId="]')?.href || '';
+    const fromHref = href.match(/\/jobs\/view\/(?:[^/?#]*-)?(\d+)|currentJobId=(\d+)/);
+    if (fromHref) return `id:${fromHref[1] || fromHref[2]}`;
+    const text = entry.textContent.replace(/\s+/g, ' ').trim();
+    return text ? `text:${text.slice(0, 120)}` : entry;
+  }
+
+  // Close pop-ups left over from the last application ("Application sent",
+  // "Not now" offers) that would sit on top of the next job
+  async dismissStrayDialogs() {
+    const form = this.findEasyApplyModal();
+    for (const dialog of this.queryAllDeep('[role="dialog"], [role="alertdialog"], .artdeco-modal')) {
+      if (dialog === form || !this.isVisible(dialog) || dialog.closest('#msg-overlay, [class*="msg-overlay"]')) continue;
+      if (form && (form.contains(dialog) || dialog.contains(form))) continue;
+      const close = Array.from(dialog.querySelectorAll('button')).find(btn => this.isVisible(btn) &&
+        (btn.getAttribute('aria-label') === 'Dismiss' ||
+         /^(done|not now|no thanks|got it|close|dismiss)$/i.test(btn.textContent.replace(/\s+/g, ' ').trim())));
+      if (close) {
+        console.log('[Job Applicator] Closing a leftover pop-up:', dialog.textContent.replace(/\s+/g, ' ').trim().slice(0, 60));
+        close.click();
+        await this.humanDelay(500, 1000);
+      }
+    }
+  }
+
+  async processJobListings(startPage = 1) {
     console.log('[Job Applicator] Processing job listings...');
 
     let totalProcessed = 0;
-    let currentPage = 1;
+    let currentPage = startPage;
     const maxPages = 5; // Process up to 5 pages
 
     while (currentPage <= maxPages && !this.hasReachedDailyLimit() && this.isRunning) {
       console.log('[Job Applicator] 📄 Processing page', currentPage);
 
-      // Wait for page to load
+      // Wait for the results to load
       await this.humanDelay(3000, 5000);
-
-      // Find all job cards. The list item and the card inside it both match
-      // these selectors, so keep only the innermost to avoid doing each job twice.
-      const matches = Array.from(document.querySelectorAll('.job-card-container, .jobs-search-results__list-item'));
-      const jobCards = matches.filter(card => !matches.some(other => other !== card && card.contains(other)));
-      console.log('[Job Applicator] Found', jobCards.length, 'job cards on page', currentPage);
-
-      if (jobCards.length === 0) {
+      await this.waitFor(() => this.findJobCards().length > 0, 15000);
+      const onPage = this.findJobCards().length;
+      console.log('[Job Applicator] Found', onPage, 'jobs on page', currentPage);
+      if (onPage === 0) {
         console.log('[Job Applicator] No more jobs found, stopping pagination');
         break;
       }
 
       let pageProcessed = 0;
-      for (const jobCard of jobCards) {
-        if (this.hasReachedDailyLimit() || !this.isRunning) {
-          break;
+      let looked = 0;
+      // Re-read the list before each job: it's redrawn as it scrolls and after applying
+      for (let guard = 0; guard < 100; guard++) {
+        if (this.hasReachedDailyLimit() || !this.isRunning) break;
+
+        const entry = this.findJobCards().find(el => !this.processedJobs.has(this.jobKey(el)));
+        if (!entry) break;
+        this.processedJobs.add(this.jobKey(entry));
+        looked++;
+
+        // Bring it into view so LinkedIn fills it in
+        entry.scrollIntoView({ block: 'center' });
+        await this.humanDelay(500, 1200);
+        const jobCard = await this.waitFor(() => this.renderedCard(entry), 5000);
+        if (!jobCard) {
+          console.log('[Job Applicator] A job in the list did not load - skipping');
+          continue;
         }
 
-        // Check if matches criteria
         const matchResult = await this.matchesJobCriteria(jobCard);
-
         if (!matchResult.matches) {
           console.log('[Job Applicator] Skipping job:', matchResult.reason);
           continue;
         }
-
-        // Check if has Easy Apply
         if (!this.hasEasyApply(jobCard)) {
           console.log('[Job Applicator] Job does not have Easy Apply, skipping');
           continue;
         }
 
-        // Click job to open details
-        const jobLink = jobCard.querySelector('a.job-card-container__link, a.job-card-list__title');
-        const jobKey = jobLink?.href || `${matchResult.jobData.jobTitle}|${matchResult.jobData.company}`;
-        if (this.processedJobs.has(jobKey)) {
-          continue;
+        const jobLink = jobCard.querySelector('a.job-card-container__link, a.job-card-list__title') ||
+                        jobCard.querySelector('a[href*="/jobs/view/"]');
+        if (!jobLink) continue;
+
+        await this.dismissStrayDialogs();
+        jobLink.click();
+        await this.humanDelay(2000, 4000);
+
+        // Never let one job hold up the rest
+        let timer;
+        const timeout = new Promise(resolve => {
+          timer = setTimeout(() => {
+            console.warn('[Job Applicator] ⚠️ Gave up on', matchResult.jobData.jobTitle, 'after 4 minutes');
+            resolve(false);
+          }, 4 * 60 * 1000);
+        });
+        const applied = await Promise.race([this.applyToJob(matchResult.jobData), timeout]);
+        clearTimeout(timer);
+        if (this.findEasyApplyModal()) await this.closeEasyApplyModal();
+
+        if (applied) {
+          pageProcessed++;
+          totalProcessed++;
+          console.warn(`[Job Applicator] ✅ Applied: ${matchResult.jobData.jobTitle} at ${matchResult.jobData.company} (${this.dailyLimits.applicationsSubmitted} today)`);
         }
-        this.processedJobs.add(jobKey);
-
-        if (jobLink) {
-          jobLink.click();
-          await this.humanDelay(2000, 4000);
-
-          // Apply to job
-          const applied = await this.applyToJob(matchResult.jobData);
-          if (applied) {
-            pageProcessed++;
-            totalProcessed++;
-          }
-
-          await this.humanDelay(5000, 10000); // Delay between applications
-        }
+        this.savePendingTask(currentPage);  // still running
+        await this.humanDelay(5000, 10000); // Delay between applications
       }
 
-      console.log('[Job Applicator] Page', currentPage, 'complete. Processed', pageProcessed, 'applications');
+      console.log('[Job Applicator] Page', currentPage, 'complete. Looked at', looked, 'jobs, applied to', pageProcessed);
 
-      // Check if we should continue to next page
-      if (this.hasReachedDailyLimit() || !this.isRunning) {
+      if (this.hasReachedDailyLimit() || !this.isRunning) break;
+
+      const moved = await this.navigateToNextPage(currentPage + 1);
+      if (moved === 'navigating') {
+        // The page is loading afresh; checkPendingApplying() carries on there
+        this.savePendingTask(currentPage + 1);
+        this.navigatingAway = true;
+        return;
+      }
+      if (!moved) {
+        console.log('[Job Applicator] No more pages, stopping');
         break;
       }
-
-      // Try to navigate to next page
-      const nextPageSuccess = await this.navigateToNextPage(currentPage + 1);
-      if (!nextPageSuccess) {
-        console.log('[Job Applicator] Could not navigate to next page, stopping');
-        break;
-      }
-
       currentPage++;
+      this.savePendingTask(currentPage);
     }
 
-    console.log('[Job Applicator] ✅ Processed', totalProcessed, 'total applications across', currentPage, 'pages');
+    console.warn('[Job Applicator] ✅ Auto Apply finished:', totalProcessed, 'applications this run');
   }
 
+  // 'clicked' (the results changed in place), 'navigating' (the page is
+  // loading afresh) or false (no more pages)
   async navigateToNextPage(pageNumber) {
     try {
       // Scroll to bottom to trigger pagination
       window.scrollTo(0, document.body.scrollHeight);
       await this.humanDelay(1000, 2000);
 
-      // Look for pagination buttons
-      const paginationButtons = document.querySelectorAll('button[aria-label*="Page"]');
-
-      for (const button of paginationButtons) {
-        const label = button.getAttribute('aria-label');
-        if (label && label.includes(`Page ${pageNumber}`)) {
-          console.log('[Job Applicator] Clicking page', pageNumber, 'button');
-          button.click();
-          await this.humanDelay(3000, 5000);
-          return true;
-        }
+      const pageButton = Array.from(document.querySelectorAll('button[aria-label*="Page"]'))
+        .find(button => (button.getAttribute('aria-label') || '').includes(`Page ${pageNumber}`));
+      if (pageButton) {
+        console.log('[Job Applicator] Clicking page', pageNumber, 'button');
+        pageButton.click();
+        await this.humanDelay(3000, 5000);
+        return 'clicked';
       }
 
-      // Alternative: Look for "Next" button
       const nextButton = document.querySelector('button[aria-label*="Next"], button[aria-label*="next"]');
       if (nextButton && !nextButton.disabled) {
         console.log('[Job Applicator] Clicking Next button');
         nextButton.click();
         await this.humanDelay(3000, 5000);
-        return true;
+        return 'clicked';
       }
 
-      // If no buttons, try modifying URL
-      const currentUrl = new URL(window.location.href);
-      currentUrl.searchParams.set('start', (pageNumber - 1) * 25); // LinkedIn shows 25 jobs per page
-      console.log('[Job Applicator] Navigating to:', currentUrl.href);
-      window.location.href = currentUrl.href;
-      await this.humanDelay(5000, 7000); // Wait longer for page navigation
-      return true;
+      // No buttons: load the next page of results by address
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('start', (pageNumber - 1) * 25); // LinkedIn shows 25 jobs per page
+      console.log('[Job Applicator] Navigating to:', nextUrl.href);
+      this.savePendingTask(pageNumber);
+      this.navigatingAway = true;
+      window.location.href = nextUrl.href;
+      return 'navigating';
 
     } catch (error) {
       console.error('[Job Applicator] Error navigating to next page:', error);
@@ -1295,6 +1386,7 @@ class JobApplicator {
   stopApplying() {
     console.log('[Job Applicator] Stop requested');
     this.isRunning = false;
+    this.clearPendingTask();
   }
 
   getStatus() {
